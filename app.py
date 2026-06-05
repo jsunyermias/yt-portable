@@ -386,17 +386,16 @@ def download_worker(job_id, url, mode, quality, subtitles=None):
         cmd += ["-f", fmt, "--merge-output-format", "mp4"]
 
     if mode != "audio" and subtitles and subtitles.get("enabled"):
-        sub_lang = (subtitles.get("lang") or "orig").strip() or "orig"
-        if sub_lang == "orig":
-            # Sin filtro de idioma: descarga los subtítulos manuales disponibles
-            # (normalmente sólo el idioma original del vídeo)
-            cmd += ["--write-subs"]
-        else:
-            cmd += [
-                "--write-subs",
-                "--write-auto-subs",
-                "--sub-langs", sub_lang,
-            ]
+        ui_lang = (subtitles.get("ui_lang") or "en").strip() or "en"
+        # Algunos códigos de idioma de la UI difieren del código de subtítulo de YouTube
+        _lang_map = {"zh": "zh-Hans", "bn": "bn-BD"}
+        sub_code = _lang_map.get(ui_lang, ui_lang)
+        # orig = idioma original del vídeo; sub_code = idioma de la interfaz
+        cmd += [
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs", f"orig,{sub_code}",
+        ]
 
     cmd += [url]
 
@@ -818,7 +817,7 @@ HTML = r"""<!DOCTYPE html>
             <input type="checkbox" id="subToggle">
             <span class="knob"></span>
           </label>
-          <select id="subLang" style="display:none"></select>
+          <span id="subInfo" style="display:none;font-size:12px;color:var(--muted)"></span>
         </div>
       </div>
     </div>
@@ -921,7 +920,7 @@ function applyLang(){
   $("#t-video").textContent = t("video");
   $("#t-audioOnly").textContent = t("audioOnly");
   $("#t-subtitlesLabel").textContent = t("subtitles");
-  if(subToggle&&subToggle.checked) populateSubLang();
+  if(subToggle&&subToggle.checked) updateSubInfo();
   $("#t-openFolder").textContent = t("openFolder");
   $("#t-closeProgram").textContent = t("closeProgram");
   if(!go.disabled) go.textContent = t("download");
@@ -978,33 +977,24 @@ function fmtEta(e){ if(e==null) return ""; const m=Math.floor(e/60), s=e%60;
   return m>0 ? `${m}m ${s}s` : `${s}s`; }
 
 // --- Subtítulos ---
-const subRow=$("#subRow"), subToggle=$("#subToggle"), subLang=$("#subLang");
-const COMMON_LANGS=[
-  ["en","English"],["es","Español"],["fr","Français"],["de","Deutsch"],
-  ["pt","Português"],["it","Italiano"],["ja","日本語"],["ko","한국어"],
-  ["zh-Hans","中文 (简体)"],["zh-Hant","中文 (繁體)"],["ru","Русский"],
-  ["ar","العربية"],["hi","हिन्दी"],["id","Bahasa Indonesia"],
-  ["tr","Türkçe"],["nl","Nederlands"],["pl","Polski"]
-];
+const subRow=$("#subRow"), subToggle=$("#subToggle"), subInfo=$("#subInfo");
 
-function populateSubLang(){
-  subLang.innerHTML=`<option value="orig">${t("subtitlesOrig")}</option>`
-    +COMMON_LANGS.map(([c,n])=>`<option value="${c}">${c} — ${n}</option>`).join("");
+function updateSubInfo(){
+  subInfo.textContent = t("subtitlesOrig") + " + " + LANG_NAMES[lang];
 }
 
 subToggle.onchange=()=>{
-  subLang.style.display=subToggle.checked?"":"none";
-  if(subToggle.checked) populateSubLang();
+  subInfo.style.display=subToggle.checked?"":"none";
+  if(subToggle.checked) updateSubInfo();
 };
 
 function updateSubRow(){
   subRow.style.display=mode==="audio"?"none":"";
   if(mode==="audio"&&subToggle.checked){
-    subToggle.checked=false; subLang.style.display="none";
+    subToggle.checked=false; subInfo.style.display="none";
   }
 }
 
-populateSubLang();
 updateSubRow();
 
 const go=$("#go"), msg=$("#msg"), pwrap=$("#pwrap"), bar=$("#bar"),
@@ -1032,7 +1022,7 @@ go.onclick = async ()=>{
   let job;
   try{
     const subtitles = (subToggle.checked && mode!=="audio")
-      ? {enabled:true, lang:subLang.value||"orig"}
+      ? {enabled:true, ui_lang:lang}
       : {enabled:false};
     const r = await fetch("/api/download",{method:"POST",
       headers:{"Content-Type":"application/json"},
