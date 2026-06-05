@@ -387,11 +387,16 @@ def download_worker(job_id, url, mode, quality, subtitles=None):
 
     if mode != "audio" and subtitles and subtitles.get("enabled"):
         sub_lang = (subtitles.get("lang") or "orig").strip() or "orig"
-        cmd += [
-            "--write-subs",
-            "--write-auto-subs",
-            "--sub-langs", sub_lang,
-        ]
+        if sub_lang == "orig":
+            # Sin filtro de idioma: descarga los subtítulos manuales disponibles
+            # (normalmente sólo el idioma original del vídeo)
+            cmd += ["--write-subs"]
+        else:
+            cmd += [
+                "--write-subs",
+                "--write-auto-subs",
+                "--sub-langs", sub_lang,
+            ]
 
     cmd += [url]
 
@@ -916,7 +921,7 @@ function applyLang(){
   $("#t-video").textContent = t("video");
   $("#t-audioOnly").textContent = t("audioOnly");
   $("#t-subtitlesLabel").textContent = t("subtitles");
-  if(subLang.options[0]&&subLang.options[0].value==="orig") subLang.options[0].textContent=t("subtitlesOrig");
+  if(subToggle&&subToggle.checked) populateSubLang();
   $("#t-openFolder").textContent = t("openFolder");
   $("#t-closeProgram").textContent = t("closeProgram");
   if(!go.disabled) go.textContent = t("download");
@@ -974,40 +979,22 @@ function fmtEta(e){ if(e==null) return ""; const m=Math.floor(e/60), s=e%60;
 
 // --- Subtítulos ---
 const subRow=$("#subRow"), subToggle=$("#subToggle"), subLang=$("#subLang");
-let subFetchCtrl=null, subLangsCache=null;
+const COMMON_LANGS=[
+  ["en","English"],["es","Español"],["fr","Français"],["de","Deutsch"],
+  ["pt","Português"],["it","Italiano"],["ja","日本語"],["ko","한국어"],
+  ["zh-Hans","中文 (简体)"],["zh-Hant","中文 (繁體)"],["ru","Русский"],
+  ["ar","العربية"],["hi","हिन्दी"],["id","Bahasa Indonesia"],
+  ["tr","Türkçe"],["nl","Nederlands"],["pl","Polski"]
+];
 
-function populateSubLang(langs){
-  const origOpt=`<option value="orig">${t("subtitlesOrig")}</option>`;
-  if(!langs||langs.length===0){ subLang.innerHTML=origOpt; return; }
-  const all=[...new Set(langs)].sort();
-  subLang.innerHTML=origOpt+all.map(l=>`<option value="${l}">${l}</option>`).join("");
-}
-
-async function fetchSubLangs(){
-  const url=$("#url").value.trim();
-  if(!url||!subToggle.checked) return;
-  subLang.disabled=true;
-  subLang.innerHTML=`<option>${t("subtitlesFetching")}</option>`;
-  subLangsCache=null;
-  if(subFetchCtrl) subFetchCtrl.abort();
-  subFetchCtrl=new AbortController();
-  try{
-    const r=await fetch("/api/info?url="+encodeURIComponent(url),{signal:subFetchCtrl.signal});
-    if(!r.ok) throw new Error();
-    const data=await r.json();
-    const langs=[...new Set([...(data.subtitles||[]),...(data.automatic_captions||[])])];
-    subLangsCache=langs;
-    populateSubLang(langs);
-  }catch(e){
-    if(e.name!=="AbortError") populateSubLang([]);
-  }finally{
-    subLang.disabled=false;
-  }
+function populateSubLang(){
+  subLang.innerHTML=`<option value="orig">${t("subtitlesOrig")}</option>`
+    +COMMON_LANGS.map(([c,n])=>`<option value="${c}">${c} — ${n}</option>`).join("");
 }
 
 subToggle.onchange=()=>{
   subLang.style.display=subToggle.checked?"":"none";
-  if(subToggle.checked&&!subLangsCache) fetchSubLangs();
+  if(subToggle.checked) populateSubLang();
 };
 
 function updateSubRow(){
@@ -1017,7 +1004,7 @@ function updateSubRow(){
   }
 }
 
-populateSubLang([]);
+populateSubLang();
 updateSubRow();
 
 const go=$("#go"), msg=$("#msg"), pwrap=$("#pwrap"), bar=$("#bar"),
