@@ -33,6 +33,8 @@ BIN_DIR = BASE_DIR / "bin"
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
+APP_VERSION = "0.8"
+
 HOST = "127.0.0.1"
 PORT = 8765
 
@@ -764,7 +766,7 @@ HTML = r"""<!DOCTYPE html>
 
     <div class="foot">
       <button class="link" id="openFolder">📂 <span id="t-openFolder">Abrir carpeta de descargas</span></button>
-      <span class="pill">local · 127.0.0.1</span>
+      <span class="pill">v__VERSION__ · local</span>
     </div>
     <div id="ustatus" style="margin-top:12px;font-size:11px;color:var(--muted);text-align:center;min-height:14px"></div>
     <button class="quit-btn" id="quit">⏻ <span id="t-closeProgram">Cerrar el programa</span></button>
@@ -1003,6 +1005,7 @@ setTimeout(pollUpdate, 1500);
 </script>
 </body>
 </html>"""
+HTML = HTML.replace("__VERSION__", APP_VERSION)
 
 
 # ---------------------------------------------------------------------------
