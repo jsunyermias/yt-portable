@@ -387,14 +387,12 @@ def download_worker(job_id, url, mode, quality, subtitles=None):
 
     if mode != "audio" and subtitles and subtitles.get("enabled"):
         ui_lang = (subtitles.get("ui_lang") or "en").strip() or "en"
-        # Algunos códigos de idioma de la UI difieren del código de subtítulo de YouTube
         _lang_map = {"zh": "zh-Hans", "bn": "bn-BD"}
         sub_code = _lang_map.get(ui_lang, ui_lang)
-        # orig = idioma original del vídeo; sub_code = idioma de la interfaz
         cmd += [
             "--write-subs",
             "--write-auto-subs",
-            "--sub-langs", f"orig,{sub_code}",
+            "--sub-langs", sub_code,
         ]
 
     cmd += [url]
@@ -980,7 +978,7 @@ function fmtEta(e){ if(e==null) return ""; const m=Math.floor(e/60), s=e%60;
 const subRow=$("#subRow"), subToggle=$("#subToggle"), subInfo=$("#subInfo");
 
 function updateSubInfo(){
-  subInfo.textContent = t("subtitlesOrig") + " + " + LANG_NAMES[lang];
+  subInfo.textContent = LANG_NAMES[lang];
 }
 
 subToggle.onchange=()=>{
