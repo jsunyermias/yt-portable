@@ -386,14 +386,9 @@ def download_worker(job_id, url, mode, quality, subtitles=None):
         cmd += ["-f", fmt, "--merge-output-format", "mp4"]
 
     if mode != "audio" and subtitles and subtitles.get("enabled"):
-        ui_lang = (subtitles.get("ui_lang") or "en").strip() or "en"
-        _lang_map = {"zh": "zh-Hans", "bn": "bn-BD"}
-        sub_code = _lang_map.get(ui_lang, ui_lang)
         cmd += [
             "--write-subs",
             "--write-auto-subs",
-            "--sub-langs", f"orig,{sub_code}",
-            "--sleep-requests", "1",
         ]
 
     cmd += [url]
@@ -979,7 +974,7 @@ function fmtEta(e){ if(e==null) return ""; const m=Math.floor(e/60), s=e%60;
 const subRow=$("#subRow"), subToggle=$("#subToggle"), subInfo=$("#subInfo");
 
 function updateSubInfo(){
-  subInfo.textContent = t("subtitlesOrig") + " + " + LANG_NAMES[lang];
+  subInfo.textContent = t("subtitlesOrig");
 }
 
 subToggle.onchange=()=>{
