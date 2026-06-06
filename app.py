@@ -392,7 +392,8 @@ def download_worker(job_id, url, mode, quality, subtitles=None):
         cmd += [
             "--write-subs",
             "--write-auto-subs",
-            "--sub-langs", sub_code,
+            "--sub-langs", f"orig,{sub_code}",
+            "--sleep-requests", "1",
         ]
 
     cmd += [url]
@@ -978,7 +979,7 @@ function fmtEta(e){ if(e==null) return ""; const m=Math.floor(e/60), s=e%60;
 const subRow=$("#subRow"), subToggle=$("#subToggle"), subInfo=$("#subInfo");
 
 function updateSubInfo(){
-  subInfo.textContent = LANG_NAMES[lang];
+  subInfo.textContent = t("subtitlesOrig") + " + " + LANG_NAMES[lang];
 }
 
 subToggle.onchange=()=>{
