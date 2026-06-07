@@ -25,6 +25,8 @@ You can drop the whole folder on a USB stick and run it anywhere.
   RTL layout for Arabic and Urdu. (Docs are EN/ES only.)
 - Video (`.mp4`, up to best available / 1080p / 720p / 480p / 360p) or
   audio-only (MP3 / M4A / Opus / WAV / FLAC).
+- Optional **full playlist download** (off by default — downloads only the
+  linked video), with per-item progress (e.g. `3/12`).
 - Real-time progress (percentage, speed, ETA) and a **cancel** button.
 - Runs **without a console window** (uses `pythonw.exe`); a big **Close** button
   in the UI stops it.
@@ -99,7 +101,6 @@ A few constants at the top of `app.py`:
 
 - `PORT` — base port (default `8765`; the app probes the next 20 if it's busy).
 - Output template, quality strings, and update sources are also there.
-- To allow full playlists, remove `--no-playlist` in `download_worker`.
 
 ---
 

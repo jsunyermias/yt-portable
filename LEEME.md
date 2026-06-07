@@ -49,6 +49,7 @@ La interfaz está disponible en 17 idiomas: español, inglés, francés, portugu
 ## Opciones
 - **Vídeo:** Mejor disponible / 1080p / 720p / 480p / 360p → `.mp4`
 - **Audio:** MP3 / M4A / Opus / WAV / FLAC (máxima calidad)
+- **Playlist completa:** activa el interruptor «Playlist completa» para descargar todos los vídeos de una lista de reproducción en lugar de solo el enlazado; verás el progreso por elemento (p. ej. `3/12`).
 
 ## Actualización automática de dependencias
 El programa se mantiene al día solo, sin tocar nada en uso:
@@ -65,7 +66,7 @@ La comprobación de red se hace solo una vez por día (se guarda la fecha en `bi
 
 ## Notas
 - Solo escucha en `127.0.0.1`; no se expone a tu red.
-- Descarga vídeos individuales (sin listas de reproducción). Para activar playlists, quita `--no-playlist` en `app.py`.
+- Por defecto descarga solo el vídeo enlazado, no toda la lista; activa «Playlist completa» en la interfaz si quieres descargarla entera.
 - Si algún día YouTube cambia y yt-dlp falla, basta con sustituir `bin\yt-dlp.exe` por la última versión desde
   https://github.com/yt-dlp/yt-dlp/releases/latest
 - Requiere Windows 10/11 (usa `curl` y PowerShell, ya incluidos en el sistema).
