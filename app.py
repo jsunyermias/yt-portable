@@ -34,7 +34,7 @@ BIN_DIR = BASE_DIR / "bin"
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-APP_VERSION = "0.9.1"
+APP_VERSION = "0.9.2"
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -75,6 +75,12 @@ update_lock = threading.Lock()
 jobs = {}
 procs = {}
 jobs_lock = threading.Lock()
+
+# Cola de descargas (no persistente: se pierde al cerrar el programa)
+queue_order = []
+queue_cv = threading.Condition(jobs_lock)
+MAX_QUEUE = 16
+QUEUE_ACTIVE_STATUSES = ("queued", "starting", "downloading", "processing")
 
 
 # ---------------------------------------------------------------------------
@@ -350,10 +356,11 @@ def _to_num(v):
 
 def download_worker(job_id, url, mode, quality, subtitles=None):
     with jobs_lock:
-        jobs[job_id] = {
+        job = jobs.setdefault(job_id, {})
+        job.update({
             "status": "starting", "percent": 0, "mode": mode,
-            "cancel": False, "created_at": time.time(),
-        }
+            "cancel": False, "started_at": time.time(),
+        })
 
     outtmpl = str(DOWNLOAD_DIR / "%(title)s.%(ext)s")
     progress_tmpl = (
@@ -494,6 +501,25 @@ def download_worker(job_id, url, mode, quality, subtitles=None):
             })
 
 
+def queue_worker():
+    """Procesa la cola de descargas de una en una, en orden."""
+    while True:
+        with queue_cv:
+            job_id = None
+            while job_id is None:
+                for jid in queue_order:
+                    j = jobs.get(jid)
+                    if j and j.get("status") == "queued":
+                        job_id = jid
+                        break
+                if job_id is None:
+                    queue_cv.wait()
+            item = dict(jobs[job_id])
+        download_worker(job_id, item["url"], item["mode"], item["quality"], item.get("subtitles"))
+        with queue_cv:
+            queue_cv.notify_all()
+
+
 # ---------------------------------------------------------------------------
 # Servidor HTTP
 # ---------------------------------------------------------------------------
@@ -514,8 +540,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/":
             self._send(200, HTML, "text/html; charset=utf-8")
-        elif path.startswith("/api/progress/"):
-            self._sse(path.rsplit("/", 1)[-1])
+        elif path == "/api/queue":
+            self._queue_snapshot()
         elif path == "/api/update-status":
             with update_lock:
                 self._send(200, json.dumps(update_state))
@@ -531,42 +557,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
-        if path == "/api/download":
+        if path == "/api/queue":
             length = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(length) if length else b"{}"
             try:
                 data = json.loads(raw.decode("utf-8") or "{}")
             except json.JSONDecodeError:
                 data = {}
-            url = (data.get("url") or "").strip()
-            mode = data.get("mode", "video")
-            quality = data.get("quality", "best")
-            subtitles = data.get("subtitles") if isinstance(data.get("subtitles"), dict) else None
-            if not url:
-                self._send(400, json.dumps({"error": "Falta el enlace."}))
-                return
-            job_id = uuid.uuid4().hex
-            threading.Thread(
-                target=download_worker,
-                args=(job_id, url, mode, quality, subtitles),
-                daemon=True,
-            ).start()
-            self._send(200, json.dumps({"job_id": job_id}))
+            self._queue_add(data)
         elif path == "/api/open-folder":
             self._open_folder()
             self._send(200, json.dumps({"ok": True}))
-        elif path.startswith("/api/cancel/"):
-            jid = path.rsplit("/", 1)[-1]
-            with jobs_lock:
-                p = procs.get(jid)
-                if jid in jobs:
-                    jobs[jid]["cancel"] = True
-            if p:
-                try:
-                    p.terminate()
-                except Exception:
-                    pass
-            self._send(200, json.dumps({"ok": bool(p)}))
+        elif path.startswith("/api/queue/") and path.endswith("/cancel"):
+            jid = path.split("/")[-2]
+            self._queue_cancel(jid)
         elif path == "/api/quit":
             self._send(200, json.dumps({"ok": True}))
             threading.Thread(
@@ -575,28 +579,71 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
-    def _sse(self, job_id):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.end_headers()
-        last = None
-        try:
-            while True:
-                with jobs_lock:
-                    job = jobs.get(job_id)
-                    snap = dict(job) if job else {"status": "unknown"}
-                payload = json.dumps(snap)
-                if payload != last:
-                    self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
-                    self.wfile.flush()
-                    last = payload
-                if snap.get("status") in ("done", "error", "cancelled", "unknown"):
-                    break
-                time.sleep(0.4)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
+    def _queue_add(self, data):
+        url = (data.get("url") or "").strip()
+        mode = data.get("mode", "video")
+        quality = data.get("quality", "best")
+        subtitles = data.get("subtitles") if isinstance(data.get("subtitles"), dict) else None
+        title = (data.get("title") or "").strip()
+        if not url:
+            self._send(400, json.dumps({"error": "Falta el enlace."}))
+            return
+        with queue_cv:
+            active = sum(
+                1 for jid in queue_order
+                if jobs.get(jid, {}).get("status") in QUEUE_ACTIVE_STATUSES
+            )
+            if active >= MAX_QUEUE:
+                self._send(409, json.dumps({"error": "queue_full"}))
+                return
+            job_id = uuid.uuid4().hex
+            jobs[job_id] = {
+                "status": "queued", "url": url, "mode": mode, "quality": quality,
+                "subtitles": subtitles, "title": title, "percent": None,
+                "queued_at": time.time(), "cancel": False,
+            }
+            queue_order.append(job_id)
+            queue_cv.notify_all()
+        self._send(200, json.dumps({"job_id": job_id}))
+
+    def _queue_snapshot(self):
+        with jobs_lock:
+            items = []
+            for jid in queue_order:
+                j = jobs.get(jid)
+                if not j:
+                    continue
+                items.append({
+                    "id": jid, "status": j.get("status"), "url": j.get("url"),
+                    "title": j.get("title"), "mode": j.get("mode"),
+                    "percent": j.get("percent"), "speed": j.get("speed"),
+                    "eta": j.get("eta"), "error": j.get("error"),
+                    "errcode": j.get("errcode"),
+                })
+        self._send(200, json.dumps({"items": items, "max": MAX_QUEUE}))
+
+    def _queue_cancel(self, jid):
+        p = None
+        with queue_cv:
+            job = jobs.get(jid)
+            if job is None:
+                self._send(404, json.dumps({"error": "not found"}))
+                return
+            status = job.get("status")
+            if status in ("starting", "downloading", "processing"):
+                job["cancel"] = True
+                p = procs.get(jid)
+            else:
+                jobs.pop(jid, None)
+                if jid in queue_order:
+                    queue_order.remove(jid)
+            queue_cv.notify_all()
+        if p:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+        self._send(200, json.dumps({"ok": True}))
 
     def _get_info(self, url):
         cmd = [YTDLP, "-j", "--no-playlist", "--no-warnings", "--skip-download"]
@@ -705,19 +752,7 @@ HTML = r"""<!DOCTYPE html>
   }
   .go:hover{filter:brightness(1.08)}
   .go:disabled{opacity:.5;cursor:not-allowed}
-  .progress-wrap{margin-top:24px;display:none}
-  .bar{height:10px;background:var(--panel-2);border-radius:999px;overflow:hidden;
-    border:1px solid var(--border)}
-  .bar > i{display:block;height:100%;width:0;border-radius:999px;
-    background:linear-gradient(90deg,var(--accent),var(--accent-2));transition:width .3s}
-  .bar.indet > i{width:35%;animation:slide 1.1s infinite ease-in-out}
   @keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
-  .pstats{display:flex;justify-content:space-between;font-size:12px;
-    color:var(--muted);margin-top:10px}
-  .cancel-btn{margin-top:12px;width:100%;padding:9px;border:1px solid var(--border);
-    border-radius:8px;background:var(--panel-2);color:var(--muted);font-size:13px;
-    font-weight:600;cursor:pointer;transition:.15s}
-  .cancel-btn:hover{color:var(--text);border-color:#5a2326}
   .msg{margin-top:18px;font-size:13px;padding:12px 14px;border-radius:10px;display:none;
     word-break:break-word}
   .msg.ok{display:block;background:rgba(63,185,80,.12);
@@ -755,7 +790,6 @@ HTML = r"""<!DOCTYPE html>
     cursor:pointer;font-size:13px;color:var(--text);white-space:nowrap}
   .lang-item:hover,.lang-item.sel{background:var(--panel-2)}
   [dir="rtl"] .lang-list{right:auto;left:0}
-  [dir="rtl"] .pstats{flex-direction:row-reverse}
   [dir="rtl"] .foot{flex-direction:row-reverse}
   .sub-ctrl{display:flex;align-items:center;gap:12px}
   .tog{display:inline-flex;align-items:center;cursor:pointer;user-select:none;flex:0 0 auto}
@@ -775,6 +809,29 @@ HTML = r"""<!DOCTYPE html>
   .vinfo-meta{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:6px;
     font-size:12px;color:var(--muted)}
   .vinfo-meta span:empty{display:none}
+  .queue-wrap{margin-top:24px}
+  .queue-head{display:flex;justify-content:space-between;align-items:center;
+    font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px}
+  .queue-count{font-size:11px;color:var(--muted);font-weight:400}
+  .queue-list{display:flex;flex-direction:column;gap:8px}
+  .qitem{padding:10px 12px;background:var(--panel-2);border:1px solid var(--border);
+    border-radius:10px}
+  .qitem-row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .qitem-title{font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;flex:1}
+  .qitem-x{flex:0 0 auto;background:none;border:none;color:var(--muted);
+    cursor:pointer;font-size:14px;line-height:1;padding:4px 7px;border-radius:6px}
+  .qitem-x:hover{color:var(--text);background:rgba(255,255,255,.06)}
+  .qitem-meta{font-size:11px;color:var(--muted);margin-top:4px}
+  .qitem.err .qitem-meta{color:var(--err)}
+  .qitem.done .qitem-meta{color:var(--ok)}
+  .qitem-bar{height:6px;background:var(--panel);border-radius:999px;overflow:hidden;
+    border:1px solid var(--border);margin-top:8px}
+  .qitem-bar > i{display:block;height:100%;width:0;border-radius:999px;
+    background:linear-gradient(90deg,var(--accent),var(--accent-2));transition:width .3s}
+  .qitem-bar.indet > i{width:35%;animation:slide 1.1s infinite ease-in-out}
+  [dir="rtl"] .qitem-row{flex-direction:row-reverse}
+  [dir="rtl"] .queue-head{flex-direction:row-reverse}
 </style>
 </head>
 <body>
@@ -839,16 +896,15 @@ HTML = r"""<!DOCTYPE html>
 
     <button class="go" id="go">Descargar</button>
 
-    <div class="progress-wrap" id="pwrap">
-      <div class="bar" id="bar"><i id="pbar"></i></div>
-      <div class="pstats">
-        <span id="pname">Preparando…</span>
-        <span id="pmeta"></span>
-      </div>
-      <button class="cancel-btn" id="cancel">Cancelar</button>
-    </div>
-
     <div class="msg" id="msg"></div>
+
+    <div class="queue-wrap" id="queueWrap" style="display:none">
+      <div class="queue-head">
+        <span id="t-queueTitle">Cola de descargas</span>
+        <span class="queue-count" id="queueCount"></span>
+      </div>
+      <div class="queue-list" id="queueList"></div>
+    </div>
 
     <div class="foot">
       <button class="link" id="openFolder">📂 <span id="t-openFolder">Abrir carpeta de descargas</span></button>
@@ -860,23 +916,23 @@ HTML = r"""<!DOCTYPE html>
 
 <script>
 const I18N = {
-  es:{sub:"Descarga vídeo o audio de YouTube. Todo en local.",linkLabel:"Enlace",formatLabel:"Formato",video:"Vídeo",audioOnly:"Solo audio",videoQuality:"Calidad de vídeo",audioFormat:"Formato de audio",qualityBest:"Mejor disponible",download:"Descargar",downloading:"Descargando…",preparing:"Preparando…",cancel:"Cancelar",cancelling:"Cancelando…",convertingAudio:"Convirtiendo audio…",mergingVideo:"Uniendo vídeo y audio…",completed:"Completado",ready:"Listo",cancelledMsg:"Descarga cancelada.",pasteFirst:"Pega un enlace primero.",startError:"Error al iniciar.",unknownError:"Error desconocido",openFolder:"Abrir carpeta de descargas",closeProgram:"Cerrar el programa",closedMsg:"Programa cerrado. Ya puedes cerrar esta pestaña.",u_checking:"Buscando actualizaciones…",u_pending:"Actualización lista: se aplicará al reiniciar.",u_uptodate:"Dependencias al día.",u_checked_today:"Comprobación ya realizada hoy.",u_check_failed:"No se pudo comprobar actualizaciones.",n_ytdlp_nochecksum:"yt-dlp: sin checksum, se omite",n_ytdlp_badchecksum:"yt-dlp: checksum no coincide, descartado",n_ytdlp_fail:"yt-dlp: fallo al comprobar",n_ffmpeg_fail:"ffmpeg: fallo al comprobar",e_ytdlp_missing:"No se encuentra yt-dlp.exe. Vuelve a ejecutar el constructor.",subtitles:"Subtítulos",subtitlesOrig:"Idioma original",subtitlesFetching:"Detectando idioma original…",videoInfoLoading:"Cargando información…"},
-  en:{sub:"Download video or audio from YouTube. All local.",linkLabel:"Link",formatLabel:"Format",video:"Video",audioOnly:"Audio only",videoQuality:"Video quality",audioFormat:"Audio format",qualityBest:"Best available",download:"Download",downloading:"Downloading…",preparing:"Preparing…",cancel:"Cancel",cancelling:"Cancelling…",convertingAudio:"Converting audio…",mergingVideo:"Merging video and audio…",completed:"Completed",ready:"Done",cancelledMsg:"Download cancelled.",pasteFirst:"Paste a link first.",startError:"Couldn't start.",unknownError:"Unknown error",openFolder:"Open downloads folder",closeProgram:"Close the program",closedMsg:"Program closed. You can close this tab.",u_checking:"Checking for updates…",u_pending:"Update ready: it will be applied on restart.",u_uptodate:"Dependencies up to date.",u_checked_today:"Already checked today.",u_check_failed:"Couldn't check for updates.",n_ytdlp_nochecksum:"yt-dlp: no checksum, skipped",n_ytdlp_badchecksum:"yt-dlp: checksum mismatch, discarded",n_ytdlp_fail:"yt-dlp: check failed",n_ffmpeg_fail:"ffmpeg: check failed",e_ytdlp_missing:"yt-dlp.exe not found. Run the builder again.",subtitles:"Subtitles",subtitlesOrig:"Original language",subtitlesFetching:"Detecting original language…",videoInfoLoading:"Loading info…"},
-  fr:{sub:"Téléchargez une vidéo ou un audio depuis YouTube. Tout en local.",linkLabel:"Lien",formatLabel:"Format",video:"Vidéo",audioOnly:"Audio seul",videoQuality:"Qualité vidéo",audioFormat:"Format audio",qualityBest:"Meilleure disponible",download:"Télécharger",downloading:"Téléchargement…",preparing:"Préparation…",cancel:"Annuler",cancelling:"Annulation…",convertingAudio:"Conversion audio…",mergingVideo:"Fusion vidéo et audio…",completed:"Terminé",ready:"Prêt",cancelledMsg:"Téléchargement annulé.",pasteFirst:"Collez d'abord un lien.",startError:"Impossible de démarrer.",unknownError:"Erreur inconnue",openFolder:"Ouvrir le dossier des téléchargements",closeProgram:"Fermer le programme",closedMsg:"Programme fermé. Vous pouvez fermer cet onglet.",u_checking:"Recherche de mises à jour…",u_pending:"Mise à jour prête : appliquée au redémarrage.",u_uptodate:"Dépendances à jour.",u_checked_today:"Déjà vérifié aujourd'hui.",u_check_failed:"Impossible de vérifier les mises à jour.",n_ytdlp_nochecksum:"yt-dlp : pas de somme de contrôle, ignoré",n_ytdlp_badchecksum:"yt-dlp : somme de contrôle incorrecte, rejeté",n_ytdlp_fail:"yt-dlp : échec de la vérification",n_ffmpeg_fail:"ffmpeg : échec de la vérification",e_ytdlp_missing:"yt-dlp.exe introuvable. Relancez le constructeur.",subtitles:"Sous-titres",subtitlesOrig:"Langue originale",subtitlesFetching:"Détection de la langue d'origine…",videoInfoLoading:"Chargement des informations…"},
-  pt:{sub:"Baixe vídeo ou áudio do YouTube. Tudo local.",linkLabel:"Link",formatLabel:"Formato",video:"Vídeo",audioOnly:"Somente áudio",videoQuality:"Qualidade do vídeo",audioFormat:"Formato de áudio",qualityBest:"Melhor disponível",download:"Baixar",downloading:"Baixando…",preparing:"Preparando…",cancel:"Cancelar",cancelling:"Cancelando…",convertingAudio:"Convertendo áudio…",mergingVideo:"Juntando vídeo e áudio…",completed:"Concluído",ready:"Pronto",cancelledMsg:"Download cancelado.",pasteFirst:"Cole um link primeiro.",startError:"Não foi possível iniciar.",unknownError:"Erro desconhecido",openFolder:"Abrir pasta de downloads",closeProgram:"Fechar o programa",closedMsg:"Programa fechado. Você pode fechar esta aba.",u_checking:"Procurando atualizações…",u_pending:"Atualização pronta: será aplicada ao reiniciar.",u_uptodate:"Dependências atualizadas.",u_checked_today:"Já verificado hoje.",u_check_failed:"Não foi possível verificar atualizações.",n_ytdlp_nochecksum:"yt-dlp: sem checksum, ignorado",n_ytdlp_badchecksum:"yt-dlp: checksum não confere, descartado",n_ytdlp_fail:"yt-dlp: falha ao verificar",n_ffmpeg_fail:"ffmpeg: falha ao verificar",e_ytdlp_missing:"yt-dlp.exe não encontrado. Execute o construtor novamente.",subtitles:"Legendas",subtitlesOrig:"Idioma original",subtitlesFetching:"Detectando idioma original…",videoInfoLoading:"Carregando informações…"},
-  it:{sub:"Scarica video o audio da YouTube. Tutto in locale.",linkLabel:"Link",formatLabel:"Formato",video:"Video",audioOnly:"Solo audio",videoQuality:"Qualità video",audioFormat:"Formato audio",qualityBest:"Migliore disponibile",download:"Scarica",downloading:"Scaricamento…",preparing:"Preparazione…",cancel:"Annulla",cancelling:"Annullamento…",convertingAudio:"Conversione audio…",mergingVideo:"Unione video e audio…",completed:"Completato",ready:"Pronto",cancelledMsg:"Download annullato.",pasteFirst:"Incolla prima un link.",startError:"Impossibile avviare.",unknownError:"Errore sconosciuto",openFolder:"Apri la cartella dei download",closeProgram:"Chiudi il programma",closedMsg:"Programma chiuso. Puoi chiudere questa scheda.",u_checking:"Ricerca aggiornamenti…",u_pending:"Aggiornamento pronto: verrà applicato al riavvio.",u_uptodate:"Dipendenze aggiornate.",u_checked_today:"Già verificato oggi.",u_check_failed:"Impossibile verificare gli aggiornamenti.",n_ytdlp_nochecksum:"yt-dlp: nessun checksum, ignorato",n_ytdlp_badchecksum:"yt-dlp: checksum non corrisponde, scartato",n_ytdlp_fail:"yt-dlp: verifica non riuscita",n_ffmpeg_fail:"ffmpeg: verifica non riuscita",e_ytdlp_missing:"yt-dlp.exe non trovato. Esegui di nuovo il costruttore.",subtitles:"Sottotitoli",subtitlesOrig:"Lingua originale",subtitlesFetching:"Rilevamento della lingua originale…",videoInfoLoading:"Caricamento informazioni…"},
-  de:{sub:"Video oder Audio von YouTube herunterladen. Alles lokal.",linkLabel:"Link",formatLabel:"Format",video:"Video",audioOnly:"Nur Audio",videoQuality:"Videoqualität",audioFormat:"Audioformat",qualityBest:"Beste verfügbare",download:"Herunterladen",downloading:"Wird heruntergeladen…",preparing:"Vorbereitung…",cancel:"Abbrechen",cancelling:"Wird abgebrochen…",convertingAudio:"Audio wird konvertiert…",mergingVideo:"Video und Audio werden zusammengeführt…",completed:"Fertig",ready:"Fertig",cancelledMsg:"Download abgebrochen.",pasteFirst:"Füge zuerst einen Link ein.",startError:"Konnte nicht starten.",unknownError:"Unbekannter Fehler",openFolder:"Download-Ordner öffnen",closeProgram:"Programm schließen",closedMsg:"Programm geschlossen. Du kannst diesen Tab schließen.",u_checking:"Suche nach Updates…",u_pending:"Update bereit: wird beim Neustart angewendet.",u_uptodate:"Abhängigkeiten aktuell.",u_checked_today:"Heute bereits geprüft.",u_check_failed:"Updates konnten nicht geprüft werden.",n_ytdlp_nochecksum:"yt-dlp: keine Prüfsumme, übersprungen",n_ytdlp_badchecksum:"yt-dlp: Prüfsumme stimmt nicht, verworfen",n_ytdlp_fail:"yt-dlp: Prüfung fehlgeschlagen",n_ffmpeg_fail:"ffmpeg: Prüfung fehlgeschlagen",e_ytdlp_missing:"yt-dlp.exe nicht gefunden. Führe den Builder erneut aus.",subtitles:"Untertitel",subtitlesOrig:"Originalsprache",subtitlesFetching:"Originalsprache wird erkannt…",videoInfoLoading:"Informationen werden geladen…"},
-  ru:{sub:"Скачивайте видео или аудио с YouTube. Всё локально.",linkLabel:"Ссылка",formatLabel:"Формат",video:"Видео",audioOnly:"Только аудио",videoQuality:"Качество видео",audioFormat:"Формат аудио",qualityBest:"Наилучшее доступное",download:"Скачать",downloading:"Загрузка…",preparing:"Подготовка…",cancel:"Отмена",cancelling:"Отмена…",convertingAudio:"Конвертация аудио…",mergingVideo:"Объединение видео и аудио…",completed:"Готово",ready:"Готово",cancelledMsg:"Загрузка отменена.",pasteFirst:"Сначала вставьте ссылку.",startError:"Не удалось запустить.",unknownError:"Неизвестная ошибка",openFolder:"Открыть папку загрузок",closeProgram:"Закрыть программу",closedMsg:"Программа закрыта. Можете закрыть эту вкладку.",u_checking:"Проверка обновлений…",u_pending:"Обновление готово: применится при перезапуске.",u_uptodate:"Зависимости актуальны.",u_checked_today:"Сегодня уже проверено.",u_check_failed:"Не удалось проверить обновления.",n_ytdlp_nochecksum:"yt-dlp: нет контрольной суммы, пропущено",n_ytdlp_badchecksum:"yt-dlp: контрольная сумма не совпадает, отклонено",n_ytdlp_fail:"yt-dlp: ошибка проверки",n_ffmpeg_fail:"ffmpeg: ошибка проверки",e_ytdlp_missing:"yt-dlp.exe не найден. Запустите конструктор снова.",subtitles:"Субтитры",subtitlesOrig:"Исходный язык",subtitlesFetching:"Определение исходного языка…",videoInfoLoading:"Загрузка информации…"},
-  zh:{sub:"从 YouTube 下载视频或音频。全部在本地。",linkLabel:"链接",formatLabel:"格式",video:"视频",audioOnly:"仅音频",videoQuality:"视频质量",audioFormat:"音频格式",qualityBest:"最佳可用",download:"下载",downloading:"下载中…",preparing:"准备中…",cancel:"取消",cancelling:"正在取消…",convertingAudio:"正在转换音频…",mergingVideo:"正在合并视频和音频…",completed:"已完成",ready:"完成",cancelledMsg:"下载已取消。",pasteFirst:"请先粘贴链接。",startError:"无法启动。",unknownError:"未知错误",openFolder:"打开下载文件夹",closeProgram:"关闭程序",closedMsg:"程序已关闭。您可以关闭此标签页。",u_checking:"正在检查更新…",u_pending:"更新已就绪：将在重启后应用。",u_uptodate:"依赖项已是最新。",u_checked_today:"今天已检查。",u_check_failed:"无法检查更新。",n_ytdlp_nochecksum:"yt-dlp：无校验和，已跳过",n_ytdlp_badchecksum:"yt-dlp：校验和不匹配，已丢弃",n_ytdlp_fail:"yt-dlp：检查失败",n_ffmpeg_fail:"ffmpeg：检查失败",e_ytdlp_missing:"找不到 yt-dlp.exe。请重新运行构建器。",subtitles:"字幕",subtitlesOrig:"原始语言",subtitlesFetching:"正在检测原始语言…",videoInfoLoading:"正在加载信息…"},
-  ja:{sub:"YouTube から動画や音声をダウンロード。すべてローカルで。",linkLabel:"リンク",formatLabel:"形式",video:"動画",audioOnly:"音声のみ",videoQuality:"動画の画質",audioFormat:"音声の形式",qualityBest:"利用可能な最高画質",download:"ダウンロード",downloading:"ダウンロード中…",preparing:"準備中…",cancel:"キャンセル",cancelling:"キャンセル中…",convertingAudio:"音声を変換中…",mergingVideo:"動画と音声を結合中…",completed:"完了",ready:"完了",cancelledMsg:"ダウンロードをキャンセルしました。",pasteFirst:"まずリンクを貼り付けてください。",startError:"開始できませんでした。",unknownError:"不明なエラー",openFolder:"ダウンロードフォルダを開く",closeProgram:"プログラムを終了",closedMsg:"プログラムを終了しました。このタブを閉じてかまいません。",u_checking:"更新を確認中…",u_pending:"更新の準備完了：再起動時に適用されます。",u_uptodate:"依存関係は最新です。",u_checked_today:"本日は確認済みです。",u_check_failed:"更新を確認できませんでした。",n_ytdlp_nochecksum:"yt-dlp: チェックサムなし、スキップ",n_ytdlp_badchecksum:"yt-dlp: チェックサム不一致、破棄",n_ytdlp_fail:"yt-dlp: 確認に失敗",n_ffmpeg_fail:"ffmpeg: 確認に失敗",e_ytdlp_missing:"yt-dlp.exe が見つかりません。ビルダーを再実行してください。",subtitles:"字幕",subtitlesOrig:"元の言語",subtitlesFetching:"元の言語を検出中…",videoInfoLoading:"情報を読み込み中…"},
-  ko:{sub:"YouTube에서 동영상 또는 오디오를 다운로드합니다. 모두 로컬에서.",linkLabel:"링크",formatLabel:"형식",video:"동영상",audioOnly:"오디오만",videoQuality:"동영상 화질",audioFormat:"오디오 형식",qualityBest:"사용 가능한 최고 화질",download:"다운로드",downloading:"다운로드 중…",preparing:"준비 중…",cancel:"취소",cancelling:"취소 중…",convertingAudio:"오디오 변환 중…",mergingVideo:"동영상과 오디오 병합 중…",completed:"완료",ready:"완료",cancelledMsg:"다운로드가 취소되었습니다.",pasteFirst:"먼저 링크를 붙여넣으세요.",startError:"시작할 수 없습니다.",unknownError:"알 수 없는 오류",openFolder:"다운로드 폴더 열기",closeProgram:"프로그램 닫기",closedMsg:"프로그램이 종료되었습니다. 이 탭을 닫아도 됩니다.",u_checking:"업데이트 확인 중…",u_pending:"업데이트 준비됨: 다시 시작할 때 적용됩니다.",u_uptodate:"종속성이 최신입니다.",u_checked_today:"오늘 이미 확인했습니다.",u_check_failed:"업데이트를 확인할 수 없습니다.",n_ytdlp_nochecksum:"yt-dlp: 체크섬 없음, 건너뜀",n_ytdlp_badchecksum:"yt-dlp: 체크섬 불일치, 폐기됨",n_ytdlp_fail:"yt-dlp: 확인 실패",n_ffmpeg_fail:"ffmpeg: 확인 실패",e_ytdlp_missing:"yt-dlp.exe를 찾을 수 없습니다. 빌더를 다시 실행하세요.",subtitles:"자막",subtitlesOrig:"원래 언어",subtitlesFetching:"원본 언어 감지 중…",videoInfoLoading:"정보를 불러오는 중…"},
-  hi:{sub:"YouTube से वीडियो या ऑडियो डाउनलोड करें। सब कुछ लोकल।",linkLabel:"लिंक",formatLabel:"प्रारूप",video:"वीडियो",audioOnly:"केवल ऑडियो",videoQuality:"वीडियो गुणवत्ता",audioFormat:"ऑडियो प्रारूप",qualityBest:"उपलब्ध सर्वोत्तम",download:"डाउनलोड करें",downloading:"डाउनलोड हो रहा है…",preparing:"तैयारी हो रही है…",cancel:"रद्द करें",cancelling:"रद्द किया जा रहा है…",convertingAudio:"ऑडियो परिवर्तित हो रहा है…",mergingVideo:"वीडियो और ऑडियो जोड़े जा रहे हैं…",completed:"पूर्ण",ready:"तैयार",cancelledMsg:"डाउनलोड रद्द किया गया।",pasteFirst:"पहले एक लिंक पेस्ट करें।",startError:"शुरू नहीं हो सका।",unknownError:"अज्ञात त्रुटि",openFolder:"डाउनलोड फ़ोल्डर खोलें",closeProgram:"प्रोग्राम बंद करें",closedMsg:"प्रोग्राम बंद हो गया। आप इस टैब को बंद कर सकते हैं।",u_checking:"अपडेट जाँच रहे हैं…",u_pending:"अपडेट तैयार: पुनः आरंभ पर लागू होगा।",u_uptodate:"निर्भरताएँ अद्यतित हैं।",u_checked_today:"आज पहले ही जाँच हो चुकी है।",u_check_failed:"अपडेट जाँच नहीं सके।",n_ytdlp_nochecksum:"yt-dlp: कोई चेकसम नहीं, छोड़ा गया",n_ytdlp_badchecksum:"yt-dlp: चेकसम मेल नहीं खाता, अस्वीकृत",n_ytdlp_fail:"yt-dlp: जाँच विफल",n_ffmpeg_fail:"ffmpeg: जाँच विफल",e_ytdlp_missing:"yt-dlp.exe नहीं मिला। बिल्डर फिर से चलाएँ।",subtitles:"उपशीर्षक",subtitlesOrig:"मूल भाषा",subtitlesFetching:"मूल भाषा का पता लगाया जा रहा है…",videoInfoLoading:"जानकारी लोड हो रही है…"},
-  bn:{sub:"YouTube থেকে ভিডিও বা অডিও ডাউনলোড করুন। সবকিছু লোকাল।",linkLabel:"লিঙ্ক",formatLabel:"ফরম্যাট",video:"ভিডিও",audioOnly:"শুধু অডিও",videoQuality:"ভিডিও মান",audioFormat:"অডিও ফরম্যাট",qualityBest:"সেরা উপলব্ধ",download:"ডাউনলোড",downloading:"ডাউনলোড হচ্ছে…",preparing:"প্রস্তুত হচ্ছে…",cancel:"বাতিল",cancelling:"বাতিল করা হচ্ছে…",convertingAudio:"অডিও রূপান্তর হচ্ছে…",mergingVideo:"ভিডিও ও অডিও যুক্ত হচ্ছে…",completed:"সম্পন্ন",ready:"প্রস্তুত",cancelledMsg:"ডাউনলোড বাতিল হয়েছে।",pasteFirst:"প্রথমে একটি লিঙ্ক পেস্ট করুন।",startError:"শুরু করা যায়নি।",unknownError:"অজানা ত্রুটি",openFolder:"ডাউনলোড ফোল্ডার খুলুন",closeProgram:"প্রোগ্রাম বন্ধ করুন",closedMsg:"প্রোগ্রাম বন্ধ হয়েছে। আপনি এই ট্যাবটি বন্ধ করতে পারেন।",u_checking:"আপডেট পরীক্ষা করা হচ্ছে…",u_pending:"আপডেট প্রস্তুত: পুনরায় চালু করলে প্রয়োগ হবে।",u_uptodate:"নির্ভরতাগুলি হালনাগাদ।",u_checked_today:"আজ ইতিমধ্যে পরীক্ষা করা হয়েছে।",u_check_failed:"আপডেট পরীক্ষা করা যায়নি।",n_ytdlp_nochecksum:"yt-dlp: কোনো চেকসাম নেই, বাদ দেওয়া হয়েছে",n_ytdlp_badchecksum:"yt-dlp: চেকসাম মেলেনি, বাতিল",n_ytdlp_fail:"yt-dlp: পরীক্ষা ব্যর্থ",n_ffmpeg_fail:"ffmpeg: পরীক্ষা ব্যর্থ",e_ytdlp_missing:"yt-dlp.exe পাওয়া যায়নি। বিল্ডার আবার চালান।",subtitles:"সাবটাইটেল",subtitlesOrig:"মূল ভাষা",subtitlesFetching:"মূল ভাষা শনাক্ত করা হচ্ছে…",videoInfoLoading:"তথ্য লোড হচ্ছে…"},
-  ar:{sub:"نزّل الفيديو أو الصوت من يوتيوب. كل شيء محلي.",linkLabel:"الرابط",formatLabel:"الصيغة",video:"فيديو",audioOnly:"الصوت فقط",videoQuality:"جودة الفيديو",audioFormat:"صيغة الصوت",qualityBest:"الأفضل المتاح",download:"تنزيل",downloading:"جارٍ التنزيل…",preparing:"جارٍ التحضير…",cancel:"إلغاء",cancelling:"جارٍ الإلغاء…",convertingAudio:"جارٍ تحويل الصوت…",mergingVideo:"جارٍ دمج الفيديو والصوت…",completed:"اكتمل",ready:"تم",cancelledMsg:"تم إلغاء التنزيل.",pasteFirst:"الصق رابطًا أولاً.",startError:"تعذّر البدء.",unknownError:"خطأ غير معروف",openFolder:"فتح مجلد التنزيلات",closeProgram:"إغلاق البرنامج",closedMsg:"تم إغلاق البرنامج. يمكنك إغلاق هذه العلامة.",u_checking:"جارٍ البحث عن تحديثات…",u_pending:"التحديث جاهز: سيُطبَّق عند إعادة التشغيل.",u_uptodate:"التبعيات محدّثة.",u_checked_today:"تم التحقق اليوم بالفعل.",u_check_failed:"تعذّر التحقق من التحديثات.",n_ytdlp_nochecksum:"yt-dlp: لا يوجد تحقق، تم التخطي",n_ytdlp_badchecksum:"yt-dlp: عدم تطابق التحقق، تم الرفض",n_ytdlp_fail:"yt-dlp: فشل التحقق",n_ffmpeg_fail:"ffmpeg: فشل التحقق",e_ytdlp_missing:"تعذّر العثور على yt-dlp.exe. شغّل المُنشئ مرة أخرى.",subtitles:"الترجمات",subtitlesOrig:"اللغة الأصلية",subtitlesFetching:"جارٍ اكتشاف اللغة الأصلية…",videoInfoLoading:"جارٍ تحميل المعلومات…"},
-  id:{sub:"Unduh video atau audio dari YouTube. Semua lokal.",linkLabel:"Tautan",formatLabel:"Format",video:"Video",audioOnly:"Hanya audio",videoQuality:"Kualitas video",audioFormat:"Format audio",qualityBest:"Terbaik yang tersedia",download:"Unduh",downloading:"Mengunduh…",preparing:"Menyiapkan…",cancel:"Batal",cancelling:"Membatalkan…",convertingAudio:"Mengonversi audio…",mergingVideo:"Menggabungkan video dan audio…",completed:"Selesai",ready:"Selesai",cancelledMsg:"Unduhan dibatalkan.",pasteFirst:"Tempel tautan terlebih dahulu.",startError:"Tidak dapat memulai.",unknownError:"Kesalahan tidak diketahui",openFolder:"Buka folder unduhan",closeProgram:"Tutup program",closedMsg:"Program ditutup. Anda dapat menutup tab ini.",u_checking:"Memeriksa pembaruan…",u_pending:"Pembaruan siap: akan diterapkan saat dimulai ulang.",u_uptodate:"Dependensi sudah terbaru.",u_checked_today:"Sudah diperiksa hari ini.",u_check_failed:"Tidak dapat memeriksa pembaruan.",n_ytdlp_nochecksum:"yt-dlp: tanpa checksum, dilewati",n_ytdlp_badchecksum:"yt-dlp: checksum tidak cocok, dibuang",n_ytdlp_fail:"yt-dlp: gagal memeriksa",n_ffmpeg_fail:"ffmpeg: gagal memeriksa",e_ytdlp_missing:"yt-dlp.exe tidak ditemukan. Jalankan builder lagi.",subtitles:"Terjemahan",subtitlesOrig:"Bahasa asli",subtitlesFetching:"Mendeteksi bahasa asli…",videoInfoLoading:"Memuat info…"},
-  ur:{sub:"یوٹیوب سے ویڈیو یا آڈیو ڈاؤن لوڈ کریں۔ سب کچھ مقامی۔",linkLabel:"لنک",formatLabel:"فارمیٹ",video:"ویڈیو",audioOnly:"صرف آڈیو",videoQuality:"ویڈیو کوالٹی",audioFormat:"آڈیو فارمیٹ",qualityBest:"بہترین دستیاب",download:"ڈاؤن لوڈ",downloading:"ڈاؤن لوڈ ہو رہا ہے…",preparing:"تیاری ہو رہی ہے…",cancel:"منسوخ",cancelling:"منسوخ ہو رہا ہے…",convertingAudio:"آڈیو تبدیل ہو رہا ہے…",mergingVideo:"ویڈیو اور آڈیو ملائے جا رہے ہیں…",completed:"مکمل",ready:"تیار",cancelledMsg:"ڈاؤن لوڈ منسوخ ہو گیا۔",pasteFirst:"پہلے ایک لنک پیسٹ کریں۔",startError:"شروع نہیں ہو سکا۔",unknownError:"نامعلوم خرابی",openFolder:"ڈاؤن لوڈ فولڈر کھولیں",closeProgram:"پروگرام بند کریں",closedMsg:"پروگرام بند ہو گیا۔ آپ یہ ٹیب بند کر سکتے ہیں۔",u_checking:"اپ ڈیٹس چیک ہو رہے ہیں…",u_pending:"اپ ڈیٹ تیار: دوبارہ شروع کرنے پر لاگو ہوگا۔",u_uptodate:"انحصار تازہ ترین ہیں۔",u_checked_today:"آج پہلے ہی چیک ہو چکا ہے۔",u_check_failed:"اپ ڈیٹس چیک نہیں ہو سکے۔",n_ytdlp_nochecksum:"yt-dlp: کوئی چیک سم نہیں، چھوڑ دیا گیا",n_ytdlp_badchecksum:"yt-dlp: چیک سم مطابقت نہیں رکھتا، مسترد",n_ytdlp_fail:"yt-dlp: چیک ناکام",n_ffmpeg_fail:"ffmpeg: چیک ناکام",e_ytdlp_missing:"yt-dlp.exe نہیں ملا۔ بلڈر دوبارہ چلائیں۔",subtitles:"سب ٹائٹل",subtitlesOrig:"اصل زبان",subtitlesFetching:"اصل زبان کا پتہ لگایا جا رہا ہے…",videoInfoLoading:"معلومات لوڈ ہو رہی ہیں…"},
-  cs:{sub:"Stahujte video nebo zvuk z YouTube. Vše lokálně.",linkLabel:"Odkaz",formatLabel:"Formát",video:"Video",audioOnly:"Pouze zvuk",videoQuality:"Kvalita videa",audioFormat:"Formát zvuku",qualityBest:"Nejlepší dostupná",download:"Stáhnout",downloading:"Stahování…",preparing:"Příprava…",cancel:"Zrušit",cancelling:"Rušení…",convertingAudio:"Převod zvuku…",mergingVideo:"Slučování videa a zvuku…",completed:"Hotovo",ready:"Hotovo",cancelledMsg:"Stahování zrušeno.",pasteFirst:"Nejprve vložte odkaz.",startError:"Nelze spustit.",unknownError:"Neznámá chyba",openFolder:"Otevřít složku se staženými soubory",closeProgram:"Zavřít program",closedMsg:"Program zavřen. Tuto kartu můžete zavřít.",u_checking:"Kontrola aktualizací…",u_pending:"Aktualizace připravena: použije se po restartu.",u_uptodate:"Závislosti jsou aktuální.",u_checked_today:"Dnes již zkontrolováno.",u_check_failed:"Nelze zkontrolovat aktualizace.",n_ytdlp_nochecksum:"yt-dlp: bez kontrolního součtu, přeskočeno",n_ytdlp_badchecksum:"yt-dlp: kontrolní součet nesouhlasí, zahozeno",n_ytdlp_fail:"yt-dlp: kontrola selhala",n_ffmpeg_fail:"ffmpeg: kontrola selhala",e_ytdlp_missing:"yt-dlp.exe nenalezen. Spusťte znovu nástroj pro sestavení.",subtitles:"Titulky",subtitlesOrig:"Původní jazyk",subtitlesFetching:"Zjišťování původního jazyka…",videoInfoLoading:"Načítání informací…"},
-  pl:{sub:"Pobieraj wideo lub audio z YouTube. Wszystko lokalnie.",linkLabel:"Link",formatLabel:"Format",video:"Wideo",audioOnly:"Tylko audio",videoQuality:"Jakość wideo",audioFormat:"Format audio",qualityBest:"Najlepsza dostępna",download:"Pobierz",downloading:"Pobieranie…",preparing:"Przygotowywanie…",cancel:"Anuluj",cancelling:"Anulowanie…",convertingAudio:"Konwertowanie audio…",mergingVideo:"Łączenie wideo i audio…",completed:"Ukończono",ready:"Gotowe",cancelledMsg:"Pobieranie anulowane.",pasteFirst:"Najpierw wklej link.",startError:"Nie można uruchomić.",unknownError:"Nieznany błąd",openFolder:"Otwórz folder pobranych",closeProgram:"Zamknij program",closedMsg:"Program zamknięty. Możesz zamknąć tę kartę.",u_checking:"Sprawdzanie aktualizacji…",u_pending:"Aktualizacja gotowa: zostanie zastosowana po ponownym uruchomieniu.",u_uptodate:"Zależności są aktualne.",u_checked_today:"Już sprawdzono dzisiaj.",u_check_failed:"Nie można sprawdzić aktualizacji.",n_ytdlp_nochecksum:"yt-dlp: brak sumy kontrolnej, pominięto",n_ytdlp_badchecksum:"yt-dlp: suma kontrolna niezgodna, odrzucono",n_ytdlp_fail:"yt-dlp: sprawdzanie nie powiodło się",n_ffmpeg_fail:"ffmpeg: sprawdzanie nie powiodło się",e_ytdlp_missing:"Nie znaleziono yt-dlp.exe. Uruchom ponownie kreator.",subtitles:"Napisy",subtitlesOrig:"Oryginalny język",subtitlesFetching:"Wykrywanie oryginalnego języka…",videoInfoLoading:"Ładowanie informacji…"}
+  es:{sub:"Descarga vídeo o audio de YouTube. Todo en local.",linkLabel:"Enlace",formatLabel:"Formato",video:"Vídeo",audioOnly:"Solo audio",videoQuality:"Calidad de vídeo",audioFormat:"Formato de audio",qualityBest:"Mejor disponible",download:"Descargar",downloading:"Descargando…",preparing:"Preparando…",cancel:"Cancelar",cancelling:"Cancelando…",convertingAudio:"Convirtiendo audio…",mergingVideo:"Uniendo vídeo y audio…",completed:"Completado",ready:"Listo",cancelledMsg:"Descarga cancelada.",pasteFirst:"Pega un enlace primero.",startError:"Error al iniciar.",unknownError:"Error desconocido",openFolder:"Abrir carpeta de descargas",closeProgram:"Cerrar el programa",closedMsg:"Programa cerrado. Ya puedes cerrar esta pestaña.",u_checking:"Buscando actualizaciones…",u_pending:"Actualización lista: se aplicará al reiniciar.",u_uptodate:"Dependencias al día.",u_checked_today:"Comprobación ya realizada hoy.",u_check_failed:"No se pudo comprobar actualizaciones.",n_ytdlp_nochecksum:"yt-dlp: sin checksum, se omite",n_ytdlp_badchecksum:"yt-dlp: checksum no coincide, descartado",n_ytdlp_fail:"yt-dlp: fallo al comprobar",n_ffmpeg_fail:"ffmpeg: fallo al comprobar",e_ytdlp_missing:"No se encuentra yt-dlp.exe. Vuelve a ejecutar el constructor.",subtitles:"Subtítulos",subtitlesOrig:"Idioma original",subtitlesFetching:"Detectando idioma original…",videoInfoLoading:"Cargando información…",queueTitle:"Cola de descargas",queued:"En cola",queueFull:"Cola llena (máx. 16).",remove:"Quitar"},
+  en:{sub:"Download video or audio from YouTube. All local.",linkLabel:"Link",formatLabel:"Format",video:"Video",audioOnly:"Audio only",videoQuality:"Video quality",audioFormat:"Audio format",qualityBest:"Best available",download:"Download",downloading:"Downloading…",preparing:"Preparing…",cancel:"Cancel",cancelling:"Cancelling…",convertingAudio:"Converting audio…",mergingVideo:"Merging video and audio…",completed:"Completed",ready:"Done",cancelledMsg:"Download cancelled.",pasteFirst:"Paste a link first.",startError:"Couldn't start.",unknownError:"Unknown error",openFolder:"Open downloads folder",closeProgram:"Close the program",closedMsg:"Program closed. You can close this tab.",u_checking:"Checking for updates…",u_pending:"Update ready: it will be applied on restart.",u_uptodate:"Dependencies up to date.",u_checked_today:"Already checked today.",u_check_failed:"Couldn't check for updates.",n_ytdlp_nochecksum:"yt-dlp: no checksum, skipped",n_ytdlp_badchecksum:"yt-dlp: checksum mismatch, discarded",n_ytdlp_fail:"yt-dlp: check failed",n_ffmpeg_fail:"ffmpeg: check failed",e_ytdlp_missing:"yt-dlp.exe not found. Run the builder again.",subtitles:"Subtitles",subtitlesOrig:"Original language",subtitlesFetching:"Detecting original language…",videoInfoLoading:"Loading info…",queueTitle:"Download queue",queued:"Queued",queueFull:"Queue full (max. 16).",remove:"Remove"},
+  fr:{sub:"Téléchargez une vidéo ou un audio depuis YouTube. Tout en local.",linkLabel:"Lien",formatLabel:"Format",video:"Vidéo",audioOnly:"Audio seul",videoQuality:"Qualité vidéo",audioFormat:"Format audio",qualityBest:"Meilleure disponible",download:"Télécharger",downloading:"Téléchargement…",preparing:"Préparation…",cancel:"Annuler",cancelling:"Annulation…",convertingAudio:"Conversion audio…",mergingVideo:"Fusion vidéo et audio…",completed:"Terminé",ready:"Prêt",cancelledMsg:"Téléchargement annulé.",pasteFirst:"Collez d'abord un lien.",startError:"Impossible de démarrer.",unknownError:"Erreur inconnue",openFolder:"Ouvrir le dossier des téléchargements",closeProgram:"Fermer le programme",closedMsg:"Programme fermé. Vous pouvez fermer cet onglet.",u_checking:"Recherche de mises à jour…",u_pending:"Mise à jour prête : appliquée au redémarrage.",u_uptodate:"Dépendances à jour.",u_checked_today:"Déjà vérifié aujourd'hui.",u_check_failed:"Impossible de vérifier les mises à jour.",n_ytdlp_nochecksum:"yt-dlp : pas de somme de contrôle, ignoré",n_ytdlp_badchecksum:"yt-dlp : somme de contrôle incorrecte, rejeté",n_ytdlp_fail:"yt-dlp : échec de la vérification",n_ffmpeg_fail:"ffmpeg : échec de la vérification",e_ytdlp_missing:"yt-dlp.exe introuvable. Relancez le constructeur.",subtitles:"Sous-titres",subtitlesOrig:"Langue originale",subtitlesFetching:"Détection de la langue d'origine…",videoInfoLoading:"Chargement des informations…",queueTitle:"File de téléchargement",queued:"En attente",queueFull:"File pleine (max. 16).",remove:"Retirer"},
+  pt:{sub:"Baixe vídeo ou áudio do YouTube. Tudo local.",linkLabel:"Link",formatLabel:"Formato",video:"Vídeo",audioOnly:"Somente áudio",videoQuality:"Qualidade do vídeo",audioFormat:"Formato de áudio",qualityBest:"Melhor disponível",download:"Baixar",downloading:"Baixando…",preparing:"Preparando…",cancel:"Cancelar",cancelling:"Cancelando…",convertingAudio:"Convertendo áudio…",mergingVideo:"Juntando vídeo e áudio…",completed:"Concluído",ready:"Pronto",cancelledMsg:"Download cancelado.",pasteFirst:"Cole um link primeiro.",startError:"Não foi possível iniciar.",unknownError:"Erro desconhecido",openFolder:"Abrir pasta de downloads",closeProgram:"Fechar o programa",closedMsg:"Programa fechado. Você pode fechar esta aba.",u_checking:"Procurando atualizações…",u_pending:"Atualização pronta: será aplicada ao reiniciar.",u_uptodate:"Dependências atualizadas.",u_checked_today:"Já verificado hoje.",u_check_failed:"Não foi possível verificar atualizações.",n_ytdlp_nochecksum:"yt-dlp: sem checksum, ignorado",n_ytdlp_badchecksum:"yt-dlp: checksum não confere, descartado",n_ytdlp_fail:"yt-dlp: falha ao verificar",n_ffmpeg_fail:"ffmpeg: falha ao verificar",e_ytdlp_missing:"yt-dlp.exe não encontrado. Execute o construtor novamente.",subtitles:"Legendas",subtitlesOrig:"Idioma original",subtitlesFetching:"Detectando idioma original…",videoInfoLoading:"Carregando informações…",queueTitle:"Fila de downloads",queued:"Na fila",queueFull:"Fila cheia (máx. 16).",remove:"Remover"},
+  it:{sub:"Scarica video o audio da YouTube. Tutto in locale.",linkLabel:"Link",formatLabel:"Formato",video:"Video",audioOnly:"Solo audio",videoQuality:"Qualità video",audioFormat:"Formato audio",qualityBest:"Migliore disponibile",download:"Scarica",downloading:"Scaricamento…",preparing:"Preparazione…",cancel:"Annulla",cancelling:"Annullamento…",convertingAudio:"Conversione audio…",mergingVideo:"Unione video e audio…",completed:"Completato",ready:"Pronto",cancelledMsg:"Download annullato.",pasteFirst:"Incolla prima un link.",startError:"Impossibile avviare.",unknownError:"Errore sconosciuto",openFolder:"Apri la cartella dei download",closeProgram:"Chiudi il programma",closedMsg:"Programma chiuso. Puoi chiudere questa scheda.",u_checking:"Ricerca aggiornamenti…",u_pending:"Aggiornamento pronto: verrà applicato al riavvio.",u_uptodate:"Dipendenze aggiornate.",u_checked_today:"Già verificato oggi.",u_check_failed:"Impossibile verificare gli aggiornamenti.",n_ytdlp_nochecksum:"yt-dlp: nessun checksum, ignorato",n_ytdlp_badchecksum:"yt-dlp: checksum non corrisponde, scartato",n_ytdlp_fail:"yt-dlp: verifica non riuscita",n_ffmpeg_fail:"ffmpeg: verifica non riuscita",e_ytdlp_missing:"yt-dlp.exe non trovato. Esegui di nuovo il costruttore.",subtitles:"Sottotitoli",subtitlesOrig:"Lingua originale",subtitlesFetching:"Rilevamento della lingua originale…",videoInfoLoading:"Caricamento informazioni…",queueTitle:"Coda di download",queued:"In coda",queueFull:"Coda piena (max. 16).",remove:"Rimuovi"},
+  de:{sub:"Video oder Audio von YouTube herunterladen. Alles lokal.",linkLabel:"Link",formatLabel:"Format",video:"Video",audioOnly:"Nur Audio",videoQuality:"Videoqualität",audioFormat:"Audioformat",qualityBest:"Beste verfügbare",download:"Herunterladen",downloading:"Wird heruntergeladen…",preparing:"Vorbereitung…",cancel:"Abbrechen",cancelling:"Wird abgebrochen…",convertingAudio:"Audio wird konvertiert…",mergingVideo:"Video und Audio werden zusammengeführt…",completed:"Fertig",ready:"Fertig",cancelledMsg:"Download abgebrochen.",pasteFirst:"Füge zuerst einen Link ein.",startError:"Konnte nicht starten.",unknownError:"Unbekannter Fehler",openFolder:"Download-Ordner öffnen",closeProgram:"Programm schließen",closedMsg:"Programm geschlossen. Du kannst diesen Tab schließen.",u_checking:"Suche nach Updates…",u_pending:"Update bereit: wird beim Neustart angewendet.",u_uptodate:"Abhängigkeiten aktuell.",u_checked_today:"Heute bereits geprüft.",u_check_failed:"Updates konnten nicht geprüft werden.",n_ytdlp_nochecksum:"yt-dlp: keine Prüfsumme, übersprungen",n_ytdlp_badchecksum:"yt-dlp: Prüfsumme stimmt nicht, verworfen",n_ytdlp_fail:"yt-dlp: Prüfung fehlgeschlagen",n_ffmpeg_fail:"ffmpeg: Prüfung fehlgeschlagen",e_ytdlp_missing:"yt-dlp.exe nicht gefunden. Führe den Builder erneut aus.",subtitles:"Untertitel",subtitlesOrig:"Originalsprache",subtitlesFetching:"Originalsprache wird erkannt…",videoInfoLoading:"Informationen werden geladen…",queueTitle:"Download-Warteschlange",queued:"Wartend",queueFull:"Warteschlange voll (max. 16).",remove:"Entfernen"},
+  ru:{sub:"Скачивайте видео или аудио с YouTube. Всё локально.",linkLabel:"Ссылка",formatLabel:"Формат",video:"Видео",audioOnly:"Только аудио",videoQuality:"Качество видео",audioFormat:"Формат аудио",qualityBest:"Наилучшее доступное",download:"Скачать",downloading:"Загрузка…",preparing:"Подготовка…",cancel:"Отмена",cancelling:"Отмена…",convertingAudio:"Конвертация аудио…",mergingVideo:"Объединение видео и аудио…",completed:"Готово",ready:"Готово",cancelledMsg:"Загрузка отменена.",pasteFirst:"Сначала вставьте ссылку.",startError:"Не удалось запустить.",unknownError:"Неизвестная ошибка",openFolder:"Открыть папку загрузок",closeProgram:"Закрыть программу",closedMsg:"Программа закрыта. Можете закрыть эту вкладку.",u_checking:"Проверка обновлений…",u_pending:"Обновление готово: применится при перезапуске.",u_uptodate:"Зависимости актуальны.",u_checked_today:"Сегодня уже проверено.",u_check_failed:"Не удалось проверить обновления.",n_ytdlp_nochecksum:"yt-dlp: нет контрольной суммы, пропущено",n_ytdlp_badchecksum:"yt-dlp: контрольная сумма не совпадает, отклонено",n_ytdlp_fail:"yt-dlp: ошибка проверки",n_ffmpeg_fail:"ffmpeg: ошибка проверки",e_ytdlp_missing:"yt-dlp.exe не найден. Запустите конструктор снова.",subtitles:"Субтитры",subtitlesOrig:"Исходный язык",subtitlesFetching:"Определение исходного языка…",videoInfoLoading:"Загрузка информации…",queueTitle:"Очередь загрузок",queued:"В очереди",queueFull:"Очередь заполнена (макс. 16).",remove:"Удалить"},
+  zh:{sub:"从 YouTube 下载视频或音频。全部在本地。",linkLabel:"链接",formatLabel:"格式",video:"视频",audioOnly:"仅音频",videoQuality:"视频质量",audioFormat:"音频格式",qualityBest:"最佳可用",download:"下载",downloading:"下载中…",preparing:"准备中…",cancel:"取消",cancelling:"正在取消…",convertingAudio:"正在转换音频…",mergingVideo:"正在合并视频和音频…",completed:"已完成",ready:"完成",cancelledMsg:"下载已取消。",pasteFirst:"请先粘贴链接。",startError:"无法启动。",unknownError:"未知错误",openFolder:"打开下载文件夹",closeProgram:"关闭程序",closedMsg:"程序已关闭。您可以关闭此标签页。",u_checking:"正在检查更新…",u_pending:"更新已就绪：将在重启后应用。",u_uptodate:"依赖项已是最新。",u_checked_today:"今天已检查。",u_check_failed:"无法检查更新。",n_ytdlp_nochecksum:"yt-dlp：无校验和，已跳过",n_ytdlp_badchecksum:"yt-dlp：校验和不匹配，已丢弃",n_ytdlp_fail:"yt-dlp：检查失败",n_ffmpeg_fail:"ffmpeg：检查失败",e_ytdlp_missing:"找不到 yt-dlp.exe。请重新运行构建器。",subtitles:"字幕",subtitlesOrig:"原始语言",subtitlesFetching:"正在检测原始语言…",videoInfoLoading:"正在加载信息…",queueTitle:"下载队列",queued:"排队中",queueFull:"队列已满（最多 16 个）。",remove:"移除"},
+  ja:{sub:"YouTube から動画や音声をダウンロード。すべてローカルで。",linkLabel:"リンク",formatLabel:"形式",video:"動画",audioOnly:"音声のみ",videoQuality:"動画の画質",audioFormat:"音声の形式",qualityBest:"利用可能な最高画質",download:"ダウンロード",downloading:"ダウンロード中…",preparing:"準備中…",cancel:"キャンセル",cancelling:"キャンセル中…",convertingAudio:"音声を変換中…",mergingVideo:"動画と音声を結合中…",completed:"完了",ready:"完了",cancelledMsg:"ダウンロードをキャンセルしました。",pasteFirst:"まずリンクを貼り付けてください。",startError:"開始できませんでした。",unknownError:"不明なエラー",openFolder:"ダウンロードフォルダを開く",closeProgram:"プログラムを終了",closedMsg:"プログラムを終了しました。このタブを閉じてかまいません。",u_checking:"更新を確認中…",u_pending:"更新の準備完了：再起動時に適用されます。",u_uptodate:"依存関係は最新です。",u_checked_today:"本日は確認済みです。",u_check_failed:"更新を確認できませんでした。",n_ytdlp_nochecksum:"yt-dlp: チェックサムなし、スキップ",n_ytdlp_badchecksum:"yt-dlp: チェックサム不一致、破棄",n_ytdlp_fail:"yt-dlp: 確認に失敗",n_ffmpeg_fail:"ffmpeg: 確認に失敗",e_ytdlp_missing:"yt-dlp.exe が見つかりません。ビルダーを再実行してください。",subtitles:"字幕",subtitlesOrig:"元の言語",subtitlesFetching:"元の言語を検出中…",videoInfoLoading:"情報を読み込み中…",queueTitle:"ダウンロードキュー",queued:"待機中",queueFull:"キューが満杯です（最大16件）。",remove:"削除"},
+  ko:{sub:"YouTube에서 동영상 또는 오디오를 다운로드합니다. 모두 로컬에서.",linkLabel:"링크",formatLabel:"형식",video:"동영상",audioOnly:"오디오만",videoQuality:"동영상 화질",audioFormat:"오디오 형식",qualityBest:"사용 가능한 최고 화질",download:"다운로드",downloading:"다운로드 중…",preparing:"준비 중…",cancel:"취소",cancelling:"취소 중…",convertingAudio:"오디오 변환 중…",mergingVideo:"동영상과 오디오 병합 중…",completed:"완료",ready:"완료",cancelledMsg:"다운로드가 취소되었습니다.",pasteFirst:"먼저 링크를 붙여넣으세요.",startError:"시작할 수 없습니다.",unknownError:"알 수 없는 오류",openFolder:"다운로드 폴더 열기",closeProgram:"프로그램 닫기",closedMsg:"프로그램이 종료되었습니다. 이 탭을 닫아도 됩니다.",u_checking:"업데이트 확인 중…",u_pending:"업데이트 준비됨: 다시 시작할 때 적용됩니다.",u_uptodate:"종속성이 최신입니다.",u_checked_today:"오늘 이미 확인했습니다.",u_check_failed:"업데이트를 확인할 수 없습니다.",n_ytdlp_nochecksum:"yt-dlp: 체크섬 없음, 건너뜀",n_ytdlp_badchecksum:"yt-dlp: 체크섬 불일치, 폐기됨",n_ytdlp_fail:"yt-dlp: 확인 실패",n_ffmpeg_fail:"ffmpeg: 확인 실패",e_ytdlp_missing:"yt-dlp.exe를 찾을 수 없습니다. 빌더를 다시 실행하세요.",subtitles:"자막",subtitlesOrig:"원래 언어",subtitlesFetching:"원본 언어 감지 중…",videoInfoLoading:"정보를 불러오는 중…",queueTitle:"다운로드 대기열",queued:"대기 중",queueFull:"대기열이 가득 찼습니다 (최대 16개).",remove:"제거"},
+  hi:{sub:"YouTube से वीडियो या ऑडियो डाउनलोड करें। सब कुछ लोकल।",linkLabel:"लिंक",formatLabel:"प्रारूप",video:"वीडियो",audioOnly:"केवल ऑडियो",videoQuality:"वीडियो गुणवत्ता",audioFormat:"ऑडियो प्रारूप",qualityBest:"उपलब्ध सर्वोत्तम",download:"डाउनलोड करें",downloading:"डाउनलोड हो रहा है…",preparing:"तैयारी हो रही है…",cancel:"रद्द करें",cancelling:"रद्द किया जा रहा है…",convertingAudio:"ऑडियो परिवर्तित हो रहा है…",mergingVideo:"वीडियो और ऑडियो जोड़े जा रहे हैं…",completed:"पूर्ण",ready:"तैयार",cancelledMsg:"डाउनलोड रद्द किया गया।",pasteFirst:"पहले एक लिंक पेस्ट करें।",startError:"शुरू नहीं हो सका।",unknownError:"अज्ञात त्रुटि",openFolder:"डाउनलोड फ़ोल्डर खोलें",closeProgram:"प्रोग्राम बंद करें",closedMsg:"प्रोग्राम बंद हो गया। आप इस टैब को बंद कर सकते हैं।",u_checking:"अपडेट जाँच रहे हैं…",u_pending:"अपडेट तैयार: पुनः आरंभ पर लागू होगा।",u_uptodate:"निर्भरताएँ अद्यतित हैं।",u_checked_today:"आज पहले ही जाँच हो चुकी है।",u_check_failed:"अपडेट जाँच नहीं सके।",n_ytdlp_nochecksum:"yt-dlp: कोई चेकसम नहीं, छोड़ा गया",n_ytdlp_badchecksum:"yt-dlp: चेकसम मेल नहीं खाता, अस्वीकृत",n_ytdlp_fail:"yt-dlp: जाँच विफल",n_ffmpeg_fail:"ffmpeg: जाँच विफल",e_ytdlp_missing:"yt-dlp.exe नहीं मिला। बिल्डर फिर से चलाएँ।",subtitles:"उपशीर्षक",subtitlesOrig:"मूल भाषा",subtitlesFetching:"मूल भाषा का पता लगाया जा रहा है…",videoInfoLoading:"जानकारी लोड हो रही है…",queueTitle:"डाउनलोड कतार",queued:"कतार में",queueFull:"कतार भर गई है (अधिकतम 16).",remove:"हटाएं"},
+  bn:{sub:"YouTube থেকে ভিডিও বা অডিও ডাউনলোড করুন। সবকিছু লোকাল।",linkLabel:"লিঙ্ক",formatLabel:"ফরম্যাট",video:"ভিডিও",audioOnly:"শুধু অডিও",videoQuality:"ভিডিও মান",audioFormat:"অডিও ফরম্যাট",qualityBest:"সেরা উপলব্ধ",download:"ডাউনলোড",downloading:"ডাউনলোড হচ্ছে…",preparing:"প্রস্তুত হচ্ছে…",cancel:"বাতিল",cancelling:"বাতিল করা হচ্ছে…",convertingAudio:"অডিও রূপান্তর হচ্ছে…",mergingVideo:"ভিডিও ও অডিও যুক্ত হচ্ছে…",completed:"সম্পন্ন",ready:"প্রস্তুত",cancelledMsg:"ডাউনলোড বাতিল হয়েছে।",pasteFirst:"প্রথমে একটি লিঙ্ক পেস্ট করুন।",startError:"শুরু করা যায়নি।",unknownError:"অজানা ত্রুটি",openFolder:"ডাউনলোড ফোল্ডার খুলুন",closeProgram:"প্রোগ্রাম বন্ধ করুন",closedMsg:"প্রোগ্রাম বন্ধ হয়েছে। আপনি এই ট্যাবটি বন্ধ করতে পারেন।",u_checking:"আপডেট পরীক্ষা করা হচ্ছে…",u_pending:"আপডেট প্রস্তুত: পুনরায় চালু করলে প্রয়োগ হবে।",u_uptodate:"নির্ভরতাগুলি হালনাগাদ।",u_checked_today:"আজ ইতিমধ্যে পরীক্ষা করা হয়েছে।",u_check_failed:"আপডেট পরীক্ষা করা যায়নি।",n_ytdlp_nochecksum:"yt-dlp: কোনো চেকসাম নেই, বাদ দেওয়া হয়েছে",n_ytdlp_badchecksum:"yt-dlp: চেকসাম মেলেনি, বাতিল",n_ytdlp_fail:"yt-dlp: পরীক্ষা ব্যর্থ",n_ffmpeg_fail:"ffmpeg: পরীক্ষা ব্যর্থ",e_ytdlp_missing:"yt-dlp.exe পাওয়া যায়নি। বিল্ডার আবার চালান।",subtitles:"সাবটাইটেল",subtitlesOrig:"মূল ভাষা",subtitlesFetching:"মূল ভাষা শনাক্ত করা হচ্ছে…",videoInfoLoading:"তথ্য লোড হচ্ছে…",queueTitle:"ডাউনলোড সারি",queued:"সারিতে আছে",queueFull:"সারি পূর্ণ (সর্বোচ্চ ১৬টি)।",remove:"সরান"},
+  ar:{sub:"نزّل الفيديو أو الصوت من يوتيوب. كل شيء محلي.",linkLabel:"الرابط",formatLabel:"الصيغة",video:"فيديو",audioOnly:"الصوت فقط",videoQuality:"جودة الفيديو",audioFormat:"صيغة الصوت",qualityBest:"الأفضل المتاح",download:"تنزيل",downloading:"جارٍ التنزيل…",preparing:"جارٍ التحضير…",cancel:"إلغاء",cancelling:"جارٍ الإلغاء…",convertingAudio:"جارٍ تحويل الصوت…",mergingVideo:"جارٍ دمج الفيديو والصوت…",completed:"اكتمل",ready:"تم",cancelledMsg:"تم إلغاء التنزيل.",pasteFirst:"الصق رابطًا أولاً.",startError:"تعذّر البدء.",unknownError:"خطأ غير معروف",openFolder:"فتح مجلد التنزيلات",closeProgram:"إغلاق البرنامج",closedMsg:"تم إغلاق البرنامج. يمكنك إغلاق هذه العلامة.",u_checking:"جارٍ البحث عن تحديثات…",u_pending:"التحديث جاهز: سيُطبَّق عند إعادة التشغيل.",u_uptodate:"التبعيات محدّثة.",u_checked_today:"تم التحقق اليوم بالفعل.",u_check_failed:"تعذّر التحقق من التحديثات.",n_ytdlp_nochecksum:"yt-dlp: لا يوجد تحقق، تم التخطي",n_ytdlp_badchecksum:"yt-dlp: عدم تطابق التحقق، تم الرفض",n_ytdlp_fail:"yt-dlp: فشل التحقق",n_ffmpeg_fail:"ffmpeg: فشل التحقق",e_ytdlp_missing:"تعذّر العثور على yt-dlp.exe. شغّل المُنشئ مرة أخرى.",subtitles:"الترجمات",subtitlesOrig:"اللغة الأصلية",subtitlesFetching:"جارٍ اكتشاف اللغة الأصلية…",videoInfoLoading:"جارٍ تحميل المعلومات…",queueTitle:"قائمة التنزيلات",queued:"في الانتظار",queueFull:"القائمة ممتلئة (الحد الأقصى 16).",remove:"إزالة"},
+  id:{sub:"Unduh video atau audio dari YouTube. Semua lokal.",linkLabel:"Tautan",formatLabel:"Format",video:"Video",audioOnly:"Hanya audio",videoQuality:"Kualitas video",audioFormat:"Format audio",qualityBest:"Terbaik yang tersedia",download:"Unduh",downloading:"Mengunduh…",preparing:"Menyiapkan…",cancel:"Batal",cancelling:"Membatalkan…",convertingAudio:"Mengonversi audio…",mergingVideo:"Menggabungkan video dan audio…",completed:"Selesai",ready:"Selesai",cancelledMsg:"Unduhan dibatalkan.",pasteFirst:"Tempel tautan terlebih dahulu.",startError:"Tidak dapat memulai.",unknownError:"Kesalahan tidak diketahui",openFolder:"Buka folder unduhan",closeProgram:"Tutup program",closedMsg:"Program ditutup. Anda dapat menutup tab ini.",u_checking:"Memeriksa pembaruan…",u_pending:"Pembaruan siap: akan diterapkan saat dimulai ulang.",u_uptodate:"Dependensi sudah terbaru.",u_checked_today:"Sudah diperiksa hari ini.",u_check_failed:"Tidak dapat memeriksa pembaruan.",n_ytdlp_nochecksum:"yt-dlp: tanpa checksum, dilewati",n_ytdlp_badchecksum:"yt-dlp: checksum tidak cocok, dibuang",n_ytdlp_fail:"yt-dlp: gagal memeriksa",n_ffmpeg_fail:"ffmpeg: gagal memeriksa",e_ytdlp_missing:"yt-dlp.exe tidak ditemukan. Jalankan builder lagi.",subtitles:"Terjemahan",subtitlesOrig:"Bahasa asli",subtitlesFetching:"Mendeteksi bahasa asli…",videoInfoLoading:"Memuat info…",queueTitle:"Antrean unduhan",queued:"Mengantre",queueFull:"Antrean penuh (maks. 16).",remove:"Hapus"},
+  ur:{sub:"یوٹیوب سے ویڈیو یا آڈیو ڈاؤن لوڈ کریں۔ سب کچھ مقامی۔",linkLabel:"لنک",formatLabel:"فارمیٹ",video:"ویڈیو",audioOnly:"صرف آڈیو",videoQuality:"ویڈیو کوالٹی",audioFormat:"آڈیو فارمیٹ",qualityBest:"بہترین دستیاب",download:"ڈاؤن لوڈ",downloading:"ڈاؤن لوڈ ہو رہا ہے…",preparing:"تیاری ہو رہی ہے…",cancel:"منسوخ",cancelling:"منسوخ ہو رہا ہے…",convertingAudio:"آڈیو تبدیل ہو رہا ہے…",mergingVideo:"ویڈیو اور آڈیو ملائے جا رہے ہیں…",completed:"مکمل",ready:"تیار",cancelledMsg:"ڈاؤن لوڈ منسوخ ہو گیا۔",pasteFirst:"پہلے ایک لنک پیسٹ کریں۔",startError:"شروع نہیں ہو سکا۔",unknownError:"نامعلوم خرابی",openFolder:"ڈاؤن لوڈ فولڈر کھولیں",closeProgram:"پروگرام بند کریں",closedMsg:"پروگرام بند ہو گیا۔ آپ یہ ٹیب بند کر سکتے ہیں۔",u_checking:"اپ ڈیٹس چیک ہو رہے ہیں…",u_pending:"اپ ڈیٹ تیار: دوبارہ شروع کرنے پر لاگو ہوگا۔",u_uptodate:"انحصار تازہ ترین ہیں۔",u_checked_today:"آج پہلے ہی چیک ہو چکا ہے۔",u_check_failed:"اپ ڈیٹس چیک نہیں ہو سکے۔",n_ytdlp_nochecksum:"yt-dlp: کوئی چیک سم نہیں، چھوڑ دیا گیا",n_ytdlp_badchecksum:"yt-dlp: چیک سم مطابقت نہیں رکھتا، مسترد",n_ytdlp_fail:"yt-dlp: چیک ناکام",n_ffmpeg_fail:"ffmpeg: چیک ناکام",e_ytdlp_missing:"yt-dlp.exe نہیں ملا۔ بلڈر دوبارہ چلائیں۔",subtitles:"سب ٹائٹل",subtitlesOrig:"اصل زبان",subtitlesFetching:"اصل زبان کا پتہ لگایا جا رہا ہے…",videoInfoLoading:"معلومات لوڈ ہو رہی ہیں…",queueTitle:"ڈاؤن لوڈ قطار",queued:"قطار میں",queueFull:"قطار بھر گئی ہے (زیادہ سے زیادہ 16)۔",remove:"ہٹائیں"},
+  cs:{sub:"Stahujte video nebo zvuk z YouTube. Vše lokálně.",linkLabel:"Odkaz",formatLabel:"Formát",video:"Video",audioOnly:"Pouze zvuk",videoQuality:"Kvalita videa",audioFormat:"Formát zvuku",qualityBest:"Nejlepší dostupná",download:"Stáhnout",downloading:"Stahování…",preparing:"Příprava…",cancel:"Zrušit",cancelling:"Rušení…",convertingAudio:"Převod zvuku…",mergingVideo:"Slučování videa a zvuku…",completed:"Hotovo",ready:"Hotovo",cancelledMsg:"Stahování zrušeno.",pasteFirst:"Nejprve vložte odkaz.",startError:"Nelze spustit.",unknownError:"Neznámá chyba",openFolder:"Otevřít složku se staženými soubory",closeProgram:"Zavřít program",closedMsg:"Program zavřen. Tuto kartu můžete zavřít.",u_checking:"Kontrola aktualizací…",u_pending:"Aktualizace připravena: použije se po restartu.",u_uptodate:"Závislosti jsou aktuální.",u_checked_today:"Dnes již zkontrolováno.",u_check_failed:"Nelze zkontrolovat aktualizace.",n_ytdlp_nochecksum:"yt-dlp: bez kontrolního součtu, přeskočeno",n_ytdlp_badchecksum:"yt-dlp: kontrolní součet nesouhlasí, zahozeno",n_ytdlp_fail:"yt-dlp: kontrola selhala",n_ffmpeg_fail:"ffmpeg: kontrola selhala",e_ytdlp_missing:"yt-dlp.exe nenalezen. Spusťte znovu nástroj pro sestavení.",subtitles:"Titulky",subtitlesOrig:"Původní jazyk",subtitlesFetching:"Zjišťování původního jazyka…",videoInfoLoading:"Načítání informací…",queueTitle:"Fronta stahování",queued:"Ve frontě",queueFull:"Fronta je plná (max. 16).",remove:"Odebrat"},
+  pl:{sub:"Pobieraj wideo lub audio z YouTube. Wszystko lokalnie.",linkLabel:"Link",formatLabel:"Format",video:"Wideo",audioOnly:"Tylko audio",videoQuality:"Jakość wideo",audioFormat:"Format audio",qualityBest:"Najlepsza dostępna",download:"Pobierz",downloading:"Pobieranie…",preparing:"Przygotowywanie…",cancel:"Anuluj",cancelling:"Anulowanie…",convertingAudio:"Konwertowanie audio…",mergingVideo:"Łączenie wideo i audio…",completed:"Ukończono",ready:"Gotowe",cancelledMsg:"Pobieranie anulowane.",pasteFirst:"Najpierw wklej link.",startError:"Nie można uruchomić.",unknownError:"Nieznany błąd",openFolder:"Otwórz folder pobranych",closeProgram:"Zamknij program",closedMsg:"Program zamknięty. Możesz zamknąć tę kartę.",u_checking:"Sprawdzanie aktualizacji…",u_pending:"Aktualizacja gotowa: zostanie zastosowana po ponownym uruchomieniu.",u_uptodate:"Zależności są aktualne.",u_checked_today:"Już sprawdzono dzisiaj.",u_check_failed:"Nie można sprawdzić aktualizacji.",n_ytdlp_nochecksum:"yt-dlp: brak sumy kontrolnej, pominięto",n_ytdlp_badchecksum:"yt-dlp: suma kontrolna niezgodna, odrzucono",n_ytdlp_fail:"yt-dlp: sprawdzanie nie powiodło się",n_ffmpeg_fail:"ffmpeg: sprawdzanie nie powiodło się",e_ytdlp_missing:"Nie znaleziono yt-dlp.exe. Uruchom ponownie kreator.",subtitles:"Napisy",subtitlesOrig:"Oryginalny język",subtitlesFetching:"Wykrywanie oryginalnego języka…",videoInfoLoading:"Ładowanie informacji…",queueTitle:"Kolejka pobierania",queued:"W kolejce",queueFull:"Kolejka pełna (maks. 16).",remove:"Usuń"}
 };
 const LANG_NAMES = {es:"Español",en:"English",fr:"Français",pt:"Português",it:"Italiano",de:"Deutsch",ru:"Русский",zh:"中文",ja:"日本語",ko:"한국어",hi:"हिन्दी",bn:"বাংলা",ar:"العربية",id:"Bahasa Indonesia",ur:"اردو",cs:"Čeština",pl:"Polski"};
 const FLAGS = {
@@ -942,8 +998,9 @@ function applyLang(){
   }
   $("#t-openFolder").textContent = t("openFolder");
   $("#t-closeProgram").textContent = t("closeProgram");
+  $("#t-queueTitle").textContent = t("queueTitle");
   if(!go.disabled) go.textContent = t("download");
-  cancelBtn.textContent = t("cancel");
+  pollQueue();
   fillQuality();
   renderLangButton();
   document.querySelectorAll(".lang-item").forEach(it =>
@@ -1105,73 +1162,93 @@ function updateSubRow(){
 
 updateSubRow();
 
-const go=$("#go"), msg=$("#msg"), pwrap=$("#pwrap"), bar=$("#bar"),
-      pbar=$("#pbar"), pname=$("#pname"), pmeta=$("#pmeta"), cancelBtn=$("#cancel");
+const go=$("#go"), msg=$("#msg"), queueWrap=$("#queueWrap"), queueList=$("#queueList"),
+      queueCount=$("#queueCount");
 function setMsg(t,type){ msg.className="msg "+type; msg.textContent=t; }
 function clearMsg(){ msg.className="msg"; msg.textContent=""; }
-function resetBtn(){ go.disabled=false; go.textContent=t("download"); }
-
-let currentJob = null;
-cancelBtn.onclick = async ()=>{
-  if(!currentJob) return;
-  cancelBtn.disabled = true; cancelBtn.textContent = t("cancelling");
-  try{ await fetch("/api/cancel/"+currentJob,{method:"POST"}); }catch(e){}
-};
+function escHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>(
+  {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
 
 go.onclick = async ()=>{
   const url = $("#url").value.trim();
   if(!url){ setMsg(t("pasteFirst"),"err"); return; }
   clearMsg();
-  go.disabled=true; go.textContent=t("downloading");
-  pwrap.style.display="block"; pbar.style.width="0%"; bar.classList.remove("indet");
-  pname.textContent=t("preparing"); pmeta.textContent="";
-  cancelBtn.disabled=false; cancelBtn.textContent=t("cancel");
-
-  let job;
   try{
     const subtitles = (subToggle.checked && mode!=="audio")
       ? {enabled:true, ui_lang:lang}
       : {enabled:false};
-    const r = await fetch("/api/download",{method:"POST",
+    const cached = (infoCache.url===url && infoCache.data) ? infoCache.data : null;
+    const r = await fetch("/api/queue",{method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({url, mode, quality:qSel.value, subtitles})});
+      body:JSON.stringify({url, mode, quality:qSel.value, subtitles, title:(cached&&cached.title)||""})});
     const data = await r.json();
-    if(!r.ok) throw new Error(data.error||t("startError"));
-    job = data.job_id; currentJob = job;
-  }catch(e){ setMsg(e.message,"err"); resetBtn(); return; }
-
-  const es = new EventSource("/api/progress/"+job);
-  es.onmessage = (ev)=>{
-    const d = JSON.parse(ev.data);
-    if(d.status==="downloading"){
-      if(d.percent!=null){ bar.classList.remove("indet"); pbar.style.width=d.percent+"%"; }
-      else { bar.classList.add("indet"); }
-      pname.textContent=t("downloading");
-      const parts=[];
-      if(d.percent!=null) parts.push(d.percent+"%");
-      if(d.speed) parts.push(fmtSpeed(d.speed));
-      if(d.eta!=null) parts.push("ETA "+fmtEta(d.eta));
-      pmeta.textContent=parts.join("  ·  ");
-    } else if(d.status==="processing"){
-      bar.classList.remove("indet"); pbar.style.width="100%";
-      pname.textContent = mode==="audio" ? t("convertingAudio") : t("mergingVideo");
-      pmeta.textContent="";
-    } else if(d.status==="done"){
-      bar.classList.remove("indet"); pbar.style.width="100%";
-      pname.textContent=t("completed"); pmeta.textContent="";
-      setMsg("✅ "+t("ready")+": "+(d.title||""),"ok");
-      es.close(); currentJob=null; pwrap.style.display="none"; resetBtn();
-    } else if(d.status==="cancelled"){
-      setMsg("⏹️ "+t("cancelledMsg"),"err");
-      es.close(); currentJob=null; pwrap.style.display="none"; resetBtn();
-    } else if(d.status==="error"){
-      const txt = d.errcode ? t("e_"+d.errcode) : (d.error||t("unknownError"));
-      setMsg("❌ "+txt,"err");
-      es.close(); currentJob=null; pwrap.style.display="none"; resetBtn();
-    } else if(d.status==="unknown"){ es.close(); currentJob=null; resetBtn(); }
-  };
-  es.onerror = ()=>{ es.close(); resetBtn(); };
+    if(!r.ok) throw new Error(data.error==="queue_full" ? t("queueFull") : (data.error||t("startError")));
+    $("#url").value=""; vinfo.style.display="none";
+    pollQueue();
+  }catch(e){ setMsg(e.message,"err"); }
 };
+
+function qStatusLine(it){
+  if(it.status==="queued") return {text:t("queued"), meta:"", percent:null};
+  if(it.status==="starting") return {text:t("preparing"), meta:"", percent:null};
+  if(it.status==="downloading"){
+    const parts=[];
+    if(it.percent!=null) parts.push(it.percent+"%");
+    if(it.speed) parts.push(fmtSpeed(it.speed));
+    if(it.eta!=null) parts.push("ETA "+fmtEta(it.eta));
+    return {text:t("downloading"), meta:parts.join("  ·  "), percent:it.percent};
+  }
+  if(it.status==="processing"){
+    return {text: it.mode==="audio" ? t("convertingAudio") : t("mergingVideo"), meta:"", percent:100};
+  }
+  if(it.status==="done") return {text:"✅ "+t("completed"), meta:"", percent:100, cls:"done"};
+  if(it.status==="cancelled") return {text:"⏹️ "+t("cancelledMsg"), meta:"", percent:null, cls:"err"};
+  if(it.status==="error"){
+    const txt = it.errcode ? t("e_"+it.errcode) : (it.error||t("unknownError"));
+    return {text:"❌ "+txt, meta:"", percent:null, cls:"err"};
+  }
+  return {text:"", meta:"", percent:null};
+}
+
+function renderQueue(items, max){
+  if(!items.length){ queueWrap.style.display="none"; queueList.innerHTML=""; return; }
+  queueWrap.style.display="";
+  queueCount.textContent = items.length+"/"+max;
+  queueList.innerHTML = items.map(it=>{
+    const s = qStatusLine(it);
+    const cls = "qitem"+(s.cls?" "+s.cls:"");
+    const showBar = it.status==="downloading" || it.status==="processing" || it.status==="starting";
+    const indet = it.status==="starting" || (it.status==="downloading" && it.percent==null);
+    const barHtml = showBar
+      ? '<div class="qitem-bar'+(indet?" indet":"")+'"><i style="width:'+(s.percent!=null?s.percent:0)+'%"></i></div>'
+      : "";
+    const title = it.title || it.url || "";
+    return '<div class="'+cls+'">'
+      +'<div class="qitem-row"><span class="qitem-title" title="'+escHtml(title)+'">'+escHtml(title)+'</span>'
+      +'<button class="qitem-x" data-id="'+escHtml(it.id)+'" title="'+escHtml(t("remove"))+'">✕</button></div>'
+      +'<div class="qitem-meta">'+escHtml(s.text)+(s.meta?"  ·  "+escHtml(s.meta):"")+'</div>'
+      +barHtml
+      +'</div>';
+  }).join("");
+  queueList.querySelectorAll(".qitem-x").forEach(btn=>{
+    btn.onclick = async ()=>{
+      btn.disabled = true;
+      try{ await fetch("/api/queue/"+btn.dataset.id+"/cancel",{method:"POST"}); }catch(e){}
+      pollQueue();
+    };
+  });
+}
+
+let queuePollTimer = null;
+async function pollQueue(){
+  try{
+    const r = await fetch("/api/queue");
+    const data = await r.json();
+    renderQueue(data.items||[], data.max||16);
+  }catch(e){}
+}
+queuePollTimer = setInterval(pollQueue, 1000);
+pollQueue();
 
 $("#openFolder").onclick = ()=> fetch("/api/open-folder",{method:"POST"});
 $("#quit").onclick = async ()=>{
@@ -1238,6 +1315,8 @@ def reaper():
             for jid in stale:
                 jobs.pop(jid, None)
                 procs.pop(jid, None)
+                if jid in queue_order:
+                    queue_order.remove(jid)
 
 
 def background_update():
@@ -1334,6 +1413,7 @@ def main():
     threading.Thread(target=open_browser, args=(port,), daemon=True).start()
     threading.Thread(target=background_update, daemon=True).start()
     threading.Thread(target=reaper, daemon=True).start()
+    threading.Thread(target=queue_worker, daemon=True).start()
 
     try:
         server.serve_forever()
