@@ -34,7 +34,7 @@ BIN_DIR = BASE_DIR / "bin"
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-APP_VERSION = "0.9.2.1"
+APP_VERSION = "0.9.2.2"
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -396,8 +396,9 @@ def download_worker(job_id, url, mode, quality, subtitles=None):
         cmd += [
             "--write-subs",
             "--write-auto-subs",
-            "--sleep-subtitles", "2",
-            "--sleep-requests", "1",
+            "--sleep-subtitles", "5",
+            "--sleep-requests", "0.75",
+            "--retry-sleep", "http:exp=2:60",
         ]
 
     cmd += [url]
