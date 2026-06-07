@@ -39,12 +39,12 @@ You can drop the whole folder on a USB stick and run it anywhere.
 
 ## Quick start
 
-1. Put `app.py` and `Crear-Portable.bat` in an empty folder.
-2. Double-click **`Crear-Portable.bat`** (once). It downloads, into that same
+1. Put `app.py` and `Setup-Portable.bat` in an empty folder.
+2. Double-click **`Setup-Portable.bat`** (once). It downloads, into that same
    folder: embedded Python (`runtime/`), `yt-dlp.exe`, and `ffmpeg` (`bin/`).
    This takes a few minutes (ffmpeg is large) and installs nothing system-wide.
 3. It creates **`YT Portable.lnk`** — double-click it to launch (no console
-   window). `Iniciar YT Portable.bat` is an equivalent fallback launcher.
+   window). `Start-Portable.bat` is an equivalent fallback launcher.
 4. The UI opens at `http://127.0.0.1:8765`. Downloads land in `downloads/`.
 
 After the first build you never need the builder again. Copy the folder
@@ -74,7 +74,7 @@ with whatever it already has.
 ```
 .
 ├── app.py                 # The whole program (server + UI), stdlib only
-├── Crear-Portable.bat     # One-time builder (downloads runtime + binaries)
+├── Setup-Portable.bat     # One-time builder (downloads runtime + binaries)
 ├── README.md
 ├── LEEME.md               # Spanish docs
 ├── LICENSE
@@ -88,7 +88,7 @@ After building (these are git-ignored, not committed):
 ├── bin/                   # yt-dlp.exe, ffmpeg.exe, ffprobe.exe, versions.json
 ├── downloads/             # Your downloads
 ├── YT Portable.lnk        # Generated launcher
-└── Iniciar YT Portable.bat
+└── Start-Portable.bat
 ```
 
 ---
@@ -106,9 +106,10 @@ A few constants at the top of `app.py`:
 ## Troubleshooting
 
 - **Nothing happens / a browser error tab opens** — check `app.log` next to
-  `app.py`. If another instance is already running, close it first.
+  `app.py`. If another instance is already running, the app detects it
+  automatically and reopens that same UI instead of starting a new one.
 - **Antivirus flags `yt-dlp.exe`** — a common false positive; allow it.
-- **The `.lnk` couldn't be created** — use `Iniciar YT Portable.bat` instead.
+- **The `.lnk` couldn't be created** — use `Start-Portable.bat` instead.
 - **Updates never apply** — make sure the app was fully closed (via the Close
   button) so the staged binaries aren't locked.
 
