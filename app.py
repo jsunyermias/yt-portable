@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-YT Portable — Descargador de vídeo/audio de YouTube (Windows, autocontenido).
+YT Portable — YouTube video/audio downloader (Windows, self-contained).
 
-No requiere instalar nada: usa el Python embebido de la carpeta `runtime\\`,
-el `yt-dlp.exe` y el `ffmpeg.exe` de la carpeta `bin\\`.
-Solo usa la librería estándar de Python (sin Flask ni pip).
+Requires no installation: uses the embedded Python in the `runtime\\`
+folder, and the `yt-dlp.exe` and `ffmpeg.exe` in the `bin\\` folder.
+Uses only Python's standard library (no Flask, no pip).
 """
 
 import os
@@ -27,7 +27,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ---------------------------------------------------------------------------
-# Rutas y configuración
+# Paths and configuration
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 BIN_DIR = BASE_DIR / "bin"
@@ -39,21 +39,21 @@ APP_VERSION = "0.9.4"
 HOST = "127.0.0.1"
 PORT = 8765
 
-# Localizar yt-dlp (preferimos el .exe local; si no, el del PATH)
+# Locate yt-dlp (prefer the local .exe; otherwise fall back to PATH)
 _ytdlp_local = BIN_DIR / "yt-dlp.exe"
 YTDLP = str(_ytdlp_local) if _ytdlp_local.exists() else "yt-dlp"
 
-# Localizar ffmpeg (carpeta para pasarle a yt-dlp con --ffmpeg-location)
+# Locate ffmpeg (folder to pass to yt-dlp via --ffmpeg-location)
 FFMPEG_LOCATION = str(BIN_DIR) if (BIN_DIR / "ffmpeg.exe").exists() else None
 
-# Evitar ventanas de consola emergentes en Windows
+# Avoid popping up console windows on Windows
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
-# --- Autoactualización de dependencias ---
-STAGING_DIR = BASE_DIR / "_staging"          # área de preparación (próximo arranque)
-VERSIONS_FILE = BIN_DIR / "versions.json"    # versiones instaladas
-STAGED_FILE = STAGING_DIR / "staged.json"    # versiones preparadas
-CHECK_FILE = BIN_DIR / "update_check.json"   # fecha de la última comprobación
+# --- Dependency self-update ---
+STAGING_DIR = BASE_DIR / "_staging"          # staging area (applied on next startup)
+VERSIONS_FILE = BIN_DIR / "versions.json"    # installed versions
+STAGED_FILE = STAGING_DIR / "staged.json"    # staged versions
+CHECK_FILE = BIN_DIR / "update_check.json"   # date of the last check
 
 YTDLP_API = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
 YTDLP_EXE_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
@@ -61,22 +61,22 @@ YTDLP_SUMS_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2
 FFMPEG_VER_URL = "https://www.gyan.dev/ffmpeg/builds/release-version"
 FFMPEG_ZIP_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 FFMPEG_SHA_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256"
-# Fuente alternativa si gyan.dev no responde (GitHub, builds de BtbN):
+# Fallback source if gyan.dev doesn't respond (GitHub, BtbN builds):
 FFMPEG_FALLBACK_URL = (
     "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/"
     "ffmpeg-master-latest-win64-gpl.zip"
 )
 
-# Estado de actualización (lo lee la interfaz; usa códigos, no texto)
+# Update state (read by the UI; uses codes, not text)
 update_state = {"checking": False, "pending": False, "code": "", "notes": []}
 update_lock = threading.Lock()
 
-# Almacén de trabajos y procesos en curso
+# Job and in-progress process store
 jobs = {}
 procs = {}
 jobs_lock = threading.Lock()
 
-# Cola de descargas (no persistente: se pierde al cerrar el programa)
+# Download queue (not persistent: lost when the program closes)
 queue_order = []
 queue_cv = threading.Condition(jobs_lock)
 MAX_QUEUE = 16
@@ -84,10 +84,10 @@ QUEUE_ACTIVE_STATUSES = ("queued", "starting", "downloading", "processing")
 
 
 # ---------------------------------------------------------------------------
-# Autoactualización de dependencias (staged: aplica en el próximo arranque)
+# Dependency self-update (staged: applied on next startup)
 # ---------------------------------------------------------------------------
 def _ssl_ctx():
-    """Contexto TLS que confía en el almacén de certificados de Windows."""
+    """TLS context that trusts the Windows certificate store."""
     ctx = ssl.create_default_context()
     try:
         ctx.load_default_certs(ssl.Purpose.SERVER_AUTH)
@@ -136,7 +136,7 @@ def _today():
 
 
 def should_check_today():
-    """True si hoy aún no se ha comprobado actualizaciones."""
+    """True if updates haven't been checked yet today."""
     return _read_json(CHECK_FILE).get("last") != _today()
 
 
@@ -149,7 +149,7 @@ def mark_checked_today():
 
 
 def installed_versions():
-    """Versiones instaladas: del versions.json o preguntando a los binarios."""
+    """Installed versions: from versions.json, or by querying the binaries."""
     v = _read_json(VERSIONS_FILE)
     if not v.get("yt-dlp") and YTDLP != "yt-dlp" and Path(YTDLP).exists():
         v["yt-dlp"] = _run_text([YTDLP, "--version"])
@@ -186,13 +186,13 @@ def _sha256(path):
 
 
 def _parse_sha_text(text):
-    """Devuelve el primer hash hex de 64 chars que aparezca en el texto."""
+    """Returns the first 64-char hex hash found in the text."""
     m = re.search(r"\b([0-9a-fA-F]{64})\b", text or "")
     return m.group(1).lower() if m else None
 
 
 def _ytdlp_expected_sha():
-    """Hash SHA256 oficial de yt-dlp.exe (de SHA2-256SUMS de la release)."""
+    """Official SHA256 hash of yt-dlp.exe (from the release's SHA2-256SUMS)."""
     try:
         txt = _http_get(YTDLP_SUMS_URL).decode("utf-8", "replace")
         for ln in txt.splitlines():
@@ -205,12 +205,12 @@ def _ytdlp_expected_sha():
 
 
 def _stage_ffmpeg():
-    """Descarga ffmpeg a _staging. Verifica el hash de gyan si está disponible;
-    si gyan falla o no verifica, usa el build de GitHub (BtbN) como respaldo."""
+    """Downloads ffmpeg into _staging. Verifies gyan's hash if available;
+    if gyan fails or doesn't verify, falls back to the GitHub (BtbN) build."""
     STAGING_DIR.mkdir(exist_ok=True)
     zip_path = STAGING_DIR / "_ffmpeg.zip"
     ok = False
-    # Primario: gyan.dev (+ checksum si lo publica)
+    # Primary: gyan.dev (+ checksum if it publishes one)
     try:
         _download(FFMPEG_ZIP_URL, zip_path)
         expected = None
@@ -221,11 +221,11 @@ def _stage_ffmpeg():
         ok = (expected is None) or (_sha256(zip_path) == expected)
     except Exception:
         ok = False
-    # Respaldo: GitHub (BtbN)
+    # Fallback: GitHub (BtbN)
     if not ok:
         zip_path.unlink(missing_ok=True)
         _download(FFMPEG_FALLBACK_URL, zip_path)
-    # Extraer solo los dos ejecutables
+    # Extract only the two executables
     try:
         with zipfile.ZipFile(zip_path) as z:
             for member in z.namelist():
@@ -236,11 +236,11 @@ def _stage_ffmpeg():
     finally:
         zip_path.unlink(missing_ok=True)
     if not (STAGING_DIR / "ffmpeg.exe").exists():
-        raise RuntimeError("ffmpeg.exe no encontrado en el zip")
+        raise RuntimeError("ffmpeg.exe not found in the zip")
 
 
 def apply_pending_updates():
-    """Se ejecuta AL ARRANCAR, antes de servir nada: aplica lo preparado."""
+    """Runs AT STARTUP, before serving anything: applies what's staged."""
     if not STAGING_DIR.exists():
         return
     staged = _read_json(STAGED_FILE)
@@ -252,14 +252,14 @@ def apply_pending_updates():
         for f in files:
             target = BIN_DIR / f.name
             if target.exists():
-                target.unlink()          # borra la versión vieja
-            shutil.move(str(f), str(target))   # instala la nueva
+                target.unlink()          # delete the old version
+            shutil.move(str(f), str(target))   # install the new one
     except PermissionError:
-        # algún binario está en uso: se reintenta en el próximo arranque
+        # some binary is in use: retry on the next startup
         return
     except Exception:
         return
-    # registrar las versiones nuevas como instaladas
+    # record the new versions as installed
     try:
         cur = _read_json(VERSIONS_FILE)
         cur.update(staged.get("versions", {}))
@@ -268,22 +268,22 @@ def apply_pending_updates():
     except Exception:
         pass
     shutil.rmtree(STAGING_DIR, ignore_errors=True)
-    print("  [update] Dependencias actualizadas a la última versión.")
+    print("  [update] Dependencies updated to the latest version.")
 
 
 def check_and_stage_updates():
-    """En segundo plano, ya arrancado: descarga novedades verificadas a _staging."""
+    """In the background, once started: downloads verified updates to _staging."""
     with update_lock:
         update_state.update({"checking": True, "code": "checking", "notes": []})
 
     inst = installed_versions()
-    already = _read_json(STAGED_FILE).get("versions", {})  # ya preparado antes
+    already = _read_json(STAGED_FILE).get("versions", {})  # already staged before
     new_versions = dict(already)
     staged_any = bool(already)
     notes = []
     errored = False
 
-    # --- yt-dlp (con verificación de checksum obligatoria) ---
+    # --- yt-dlp (checksum verification mandatory) ---
     try:
         latest_yt = _latest_ytdlp()
         if latest_yt and latest_yt != inst.get("yt-dlp") and latest_yt != already.get("yt-dlp"):
@@ -304,7 +304,7 @@ def check_and_stage_updates():
         errored = True
         notes.append("ytdlp_fail")
 
-    # --- ffmpeg (verificación si gyan publica hash; si no, respaldo GitHub) ---
+    # --- ffmpeg (verified if gyan publishes a hash; otherwise GitHub fallback) ---
     try:
         latest_ff = _latest_ffmpeg()
         inst_ff = inst.get("ffmpeg") or ""
@@ -316,7 +316,7 @@ def check_and_stage_updates():
         errored = True
         notes.append("ffmpeg_fail")
 
-    # --- Persistir resultado y fijar código de estado ---
+    # --- Persist the result and set the status code ---
     try:
         if staged_any:
             STAGING_DIR.mkdir(exist_ok=True)
@@ -329,7 +329,7 @@ def check_and_stage_updates():
             code, pending = "uptodate", False
         with update_lock:
             update_state.update({"pending": pending, "code": code, "notes": list(notes)})
-        # Marcar como comprobado hoy solo si no hubo error duro sin resultado
+        # Mark as checked today only if there wasn't a hard error with no result
         if staged_any or not errored:
             mark_checked_today()
     finally:
@@ -338,12 +338,12 @@ def check_and_stage_updates():
 
 
 def notes_only_soft(notes):
-    """True si las notas son solo informativas (no fallos de red duros)."""
+    """True if the notes are only informational (no hard network failures)."""
     return all(not n.endswith("_fail") for n in notes)
 
 
 # ---------------------------------------------------------------------------
-# Descarga (subprocess sobre yt-dlp)
+# Download (subprocess over yt-dlp)
 # ---------------------------------------------------------------------------
 def _to_num(v):
     if v in (None, "", "NA", "None"):
@@ -407,7 +407,7 @@ def download_worker(job_id, url, mode, quality, subtitles=None):
 
     cmd += [url]
 
-    tail = []  # últimas líneas para mensaje de error
+    tail = []  # last lines for the error message
     title = None
 
     try:
@@ -486,7 +486,7 @@ def download_worker(job_id, url, mode, quality, subtitles=None):
         with jobs_lock:
             jobs[job_id].update({
                 "status": "cancelled",
-                "error": "Descarga cancelada.",
+                "error": "Download cancelled.",
                 "finished_at": time.time(),
             })
     elif code == 0:
@@ -494,14 +494,14 @@ def download_worker(job_id, url, mode, quality, subtitles=None):
             jobs[job_id].update({
                 "status": "done",
                 "percent": 100,
-                "title": title or "Archivo descargado",
+                "title": title or "Downloaded file",
                 "finished_at": time.time(),
             })
     else:
-        # buscar una línea de ERROR en la cola
+        # look for an ERROR line in the tail
         err = next((l for l in reversed(tail) if "ERROR" in l), None)
         if not err:
-            err = tail[-1] if tail else f"yt-dlp terminó con código {code}."
+            err = tail[-1] if tail else f"yt-dlp exited with code {code}."
         with jobs_lock:
             jobs[job_id].update({
                 "status": "error", "error": err, "finished_at": time.time(),
@@ -509,7 +509,7 @@ def download_worker(job_id, url, mode, quality, subtitles=None):
 
 
 def queue_worker():
-    """Procesa la cola de descargas de una en una, en orden."""
+    """Processes the download queue one at a time, in order."""
     while True:
         with queue_cv:
             job_id = None
@@ -528,10 +528,10 @@ def queue_worker():
 
 
 # ---------------------------------------------------------------------------
-# Servidor HTTP
+# HTTP Server
 # ---------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
-    # Silenciar el log por petición
+    # Silence the per-request log
     def log_message(self, *args):
         pass
 
@@ -558,7 +558,7 @@ class Handler(BaseHTTPRequestHandler):
             qs = urllib.parse.parse_qs(self.path.split("?", 1)[-1]) if "?" in self.path else {}
             url = (qs.get("url", [""])[0]).strip()
             if not url:
-                self._send(400, json.dumps({"error": "Falta el enlace."}))
+                self._send(400, json.dumps({"error": "Missing link."}))
             else:
                 self._get_info(url)
         else:
@@ -595,7 +595,7 @@ class Handler(BaseHTTPRequestHandler):
         subtitles = data.get("subtitles") if isinstance(data.get("subtitles"), dict) else None
         title = (data.get("title") or "").strip()
         if not url:
-            self._send(400, json.dumps({"error": "Falta el enlace."}))
+            self._send(400, json.dumps({"error": "Missing link."}))
             return
         with queue_cv:
             active = sum(
@@ -698,7 +698,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 # ---------------------------------------------------------------------------
-# Interfaz (HTML + CSS + JS embebidos)
+# Interface (embedded HTML + CSS + JS)
 # ---------------------------------------------------------------------------
 HTML = r"""<!DOCTYPE html>
 <html lang="es">
@@ -1300,7 +1300,7 @@ HTML = HTML.replace("__VERSION__", APP_VERSION)
 
 
 # ---------------------------------------------------------------------------
-# Arranque
+# Startup
 # ---------------------------------------------------------------------------
 def open_browser(port, delay=1.0):
     time.sleep(delay)
@@ -1311,7 +1311,7 @@ def open_browser(port, delay=1.0):
 
 
 def reaper():
-    """Purga trabajos terminados para que `jobs` no crezca sin límite."""
+    """Purges finished jobs so that `jobs` doesn't grow without bound."""
     while True:
         time.sleep(120)
         now = time.time()
@@ -1329,7 +1329,7 @@ def reaper():
 
 
 def background_update():
-    # pequeño retardo para no competir con el arranque
+    # small delay so it doesn't compete with startup
     time.sleep(2.0)
     if not should_check_today():
         with update_lock:
@@ -1339,8 +1339,8 @@ def background_update():
 
 
 def _setup_output():
-    """Con pythonw.exe no hay consola: stdout/stderr son None y print fallaría.
-    Redirigimos a app.log para no romper y poder diagnosticar."""
+    """With pythonw.exe there's no console: stdout/stderr are None and print would
+    fail. We redirect to app.log so it doesn't crash and can be diagnosed."""
     if sys.stdout is not None and sys.stderr is not None:
         return
     try:
@@ -1354,8 +1354,8 @@ def _setup_output():
 
 
 def find_running_instance():
-    """Busca una instancia de YT Portable ya escuchando en los puertos candidatos.
-    Devuelve el puerto si la encuentra, o None."""
+    """Looks for a YT Portable instance already listening on the candidate ports.
+    Returns the port if found, or None."""
     for p in range(PORT, PORT + 20):
         try:
             req = urllib.request.Request(f"http://{HOST}:{p}/api/ping")
@@ -1369,7 +1369,7 @@ def find_running_instance():
 
 
 def make_server():
-    """Crea el servidor probando puertos libres a partir de PORT."""
+    """Creates the server, trying free ports starting at PORT."""
     last_err = None
     for p in range(PORT, PORT + 20):
         try:
@@ -1378,21 +1378,21 @@ def make_server():
             return srv, p
         except OSError as e:
             last_err = e
-    raise last_err if last_err else OSError("sin puertos libres")
+    raise last_err if last_err else OSError("no free ports")
 
 
 def show_error_page(detail):
-    """Sin consola, abre una página local con el error en vez del vacío."""
+    """With no console, open a local page with the error instead of nothing."""
     safe = (str(detail) or "").replace("<", "&lt;").replace(">", "&gt;")
     html = (
-        "<!doctype html><html lang='es'><head><meta charset='utf-8'>"
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<title>YT Portable — error</title></head>"
         "<body style='font-family:Segoe UI,sans-serif;background:#0d1117;"
         "color:#e6edf3;max-width:640px;margin:8vh auto;padding:0 24px;line-height:1.5'>"
-        "<h2>YT Portable no pudo arrancar</h2>"
+        "<h2>YT Portable failed to start</h2>"
         f"<p style='color:#f85149'>{safe}</p>"
-        "<p>Si el problema persiste, revisa el archivo <code>app.log</code> "
-        "que está junto al programa, o cierra otras instancias abiertas.</p>"
+        "<p>If the problem persists, check the <code>app.log</code> file "
+        "next to the program, or close any other open instances.</p>"
         "</body></html>"
     )
     try:
@@ -1406,40 +1406,40 @@ def show_error_page(detail):
 def main():
     _setup_output()
 
-    # 1) Aplicar lo preparado en el arranque anterior (antes de servir nada)
+    # 1) Apply whatever was staged on the previous run (before serving anything)
     try:
         apply_pending_updates()
     except Exception as e:
         print("  [warn] apply_pending_updates:", e)
 
-    # 2) Si ya hay una instancia activa, abrir su interfaz y no arrancar otra
+    # 2) If an instance is already running, open its UI instead of starting another
     existing_port = find_running_instance()
     if existing_port is not None:
-        print(f"  [info] Ya hay una instancia de YT Portable activa en el puerto {existing_port}.")
-        print(f"  Abriendo: http://{HOST}:{existing_port}")
+        print(f"  [info] A YT Portable instance is already running on port {existing_port}.")
+        print(f"  Opening: http://{HOST}:{existing_port}")
         webbrowser.open(f"http://{HOST}:{existing_port}")
         return
 
-    # 3) Crear el servidor en un puerto libre
+    # 3) Create the server on a free port
     try:
         server, port = make_server()
     except Exception as e:
-        msg = ("No se encontró ningún puerto libre entre "
-               f"{PORT} y {PORT + 19}. Puede que ya haya otra instancia abierta. "
-               f"Detalle: {e}")
+        msg = ("Couldn't find a free port between "
+               f"{PORT} and {PORT + 19}. Another instance may already be running. "
+               f"Detail: {e}")
         print("  [error]", msg)
         show_error_page(msg)
         return
 
     print("=" * 52)
     print("  YT Portable")
-    print(f"  Interfaz:  http://{HOST}:{port}")
-    print(f"  Descargas: {DOWNLOAD_DIR}")
+    print(f"  Interface: http://{HOST}:{port}")
+    print(f"  Downloads: {DOWNLOAD_DIR}")
     if YTDLP == "yt-dlp":
-        print("  [aviso] No se encontró bin\\yt-dlp.exe (usando PATH).")
+        print("  [warn] bin\\yt-dlp.exe not found (using PATH).")
     if not FFMPEG_LOCATION:
-        print("  [aviso] No se encontró bin\\ffmpeg.exe (audio/merge pueden fallar).")
-    print("  Para detener: botón 'Cerrar el programa' en la interfaz.")
+        print("  [warn] bin\\ffmpeg.exe not found (audio/merge may fail).")
+    print("  To stop: 'Close the program' button in the interface.")
     print("=" * 52)
 
     threading.Thread(target=open_browser, args=(port,), daemon=True).start()
@@ -1452,8 +1452,8 @@ def main():
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        print("  [error] servidor:", e)
-        show_error_page(f"El servidor se detuvo: {e}")
+        print("  [error] server:", e)
+        show_error_page(f"The server stopped: {e}")
 
 
 if __name__ == "__main__":

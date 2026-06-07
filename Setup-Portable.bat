@@ -4,9 +4,9 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 REM ============================================================
-REM   YT Portable - Setup (ejecutar UNA sola vez)
-REM   Descarga el motor portable dentro de esta carpeta.
-REM   No instala nada en Windows. No requiere admin.
+REM   YT Portable - Setup (run ONCE)
+REM   Downloads the portable engine into this folder.
+REM   Installs nothing on Windows. No admin rights required.
 REM ============================================================
 
 set "PYVER=3.12.7"
@@ -16,73 +16,73 @@ set "FFURL=https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
 echo.
 echo ============================================================
-echo   Montando YT Portable... (puede tardar unos minutos)
+echo   Setting up YT Portable... (this may take a few minutes)
 echo ============================================================
 echo.
 
 if not exist "app.py" (
-    echo [ERROR] No encuentro app.py. Deja este .bat junto a app.py.
+    echo [ERROR] Can't find app.py. Place this .bat next to app.py.
     pause & exit /b 1
 )
 
 if not exist "_tmp" mkdir "_tmp"
 if not exist "bin" mkdir "bin"
 
-REM ---- 1) Python embebido ------------------------------------
+REM ---- 1) Embedded Python ------------------------------------
 if exist "runtime\python.exe" (
-    echo [1/3] Python ya presente, omitido.
+    echo [1/3] Python already present, skipping.
 ) else (
-    echo [1/3] Descargando Python embebido...
+    echo [1/3] Downloading embedded Python...
     curl -L --fail -o "_tmp\python.zip" "%PYURL%"
-    if errorlevel 1 ( echo [ERROR] Fallo al descargar Python. & goto :fail )
-    echo       Extrayendo...
+    if errorlevel 1 ( echo [ERROR] Failed to download Python. & goto :fail )
+    echo       Extracting...
     powershell -NoProfile -Command "Expand-Archive -Force '_tmp\python.zip' 'runtime'"
-    if not exist "runtime\python.exe" ( echo [ERROR] Extraccion de Python fallida. & goto :fail )
+    if not exist "runtime\python.exe" ( echo [ERROR] Python extraction failed. & goto :fail )
 )
 
 REM ---- 2) yt-dlp.exe -----------------------------------------
-echo [2/3] Descargando yt-dlp...
+echo [2/3] Downloading yt-dlp...
 curl -L --fail -o "bin\yt-dlp.exe" "%YTURL%"
-if not exist "bin\yt-dlp.exe" ( echo [ERROR] Fallo al descargar yt-dlp. & goto :fail )
+if not exist "bin\yt-dlp.exe" ( echo [ERROR] Failed to download yt-dlp. & goto :fail )
 
 REM ---- 3) ffmpeg ---------------------------------------------
 if exist "bin\ffmpeg.exe" (
-    echo [3/3] ffmpeg ya presente, omitido.
+    echo [3/3] ffmpeg already present, skipping.
 ) else (
-    echo [3/3] Descargando ffmpeg... ^(grande, paciencia^)
+    echo [3/3] Downloading ffmpeg... ^(large, please be patient^)
     curl -L --fail -o "_tmp\ffmpeg.zip" "%FFURL%"
-    if errorlevel 1 ( echo [ERROR] Fallo al descargar ffmpeg. & goto :fail )
-    echo       Extrayendo ffmpeg.exe y ffprobe.exe...
+    if errorlevel 1 ( echo [ERROR] Failed to download ffmpeg. & goto :fail )
+    echo       Extracting ffmpeg.exe and ffprobe.exe...
     powershell -NoProfile -Command "Expand-Archive -Force '_tmp\ffmpeg.zip' '_tmp\ff'; Get-ChildItem -Path '_tmp\ff' -Recurse -Include ffmpeg.exe,ffprobe.exe | ForEach-Object { Copy-Item $_.FullName -Destination 'bin' -Force }"
-    if not exist "bin\ffmpeg.exe" ( echo [ERROR] No se pudo extraer ffmpeg. & goto :fail )
+    if not exist "bin\ffmpeg.exe" ( echo [ERROR] Couldn't extract ffmpeg. & goto :fail )
 )
 
-REM ---- Crear lanzador (sin consola, usa pythonw) ------------
+REM ---- Create launcher (no console, uses pythonw) -----------
 > "Start-Portable.bat" echo @echo off
 >> "Start-Portable.bat" echo cd /d "%%~dp0"
 >> "Start-Portable.bat" echo start "" "%%~dp0runtime\pythonw.exe" "%%~dp0app.py"
 
-REM ---- Crear acceso directo .lnk (lanza pythonw SIN ventana) -
-REM    Usa el objeto COM de PowerShell; NO ejecuta ningun .vbs.
-echo [*] Creando acceso directo sin ventana...
+REM ---- Create .lnk shortcut (launches pythonw with NO window)
+REM    Uses PowerShell's COM object; does NOT run any .vbs.
+echo [*] Creating windowless shortcut...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$d=(Get-Location).Path; $w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut((Join-Path $d 'YT Portable.lnk')); $s.TargetPath=(Join-Path $d 'runtime\pythonw.exe'); $s.Arguments='\"'+(Join-Path $d 'app.py')+'\"'; $s.WorkingDirectory=$d; $s.IconLocation=(Join-Path $d 'runtime\pythonw.exe'); $s.Save()" 2>nul
 if exist "YT Portable.lnk" (
-    echo       Acceso directo creado: "YT Portable.lnk"
+    echo       Shortcut created: "YT Portable.lnk"
 ) else (
-    echo       [aviso] No se pudo crear el .lnk; usa "Start-Portable.bat".
+    echo       [notice] Couldn't create the .lnk; use "Start-Portable.bat" instead.
 )
 
-REM ---- Limpieza ----------------------------------------------
+REM ---- Cleanup -----------------------------------------------
 rmdir /s /q "_tmp" 2>nul
 
 echo.
 echo ============================================================
-echo   LISTO. Todo queda dentro de esta carpeta.
-echo   Para usarlo (sin ventana de consola):
-echo       doble clic en  "YT Portable.lnk"
-echo   Alternativa:  "Start-Portable.bat"
-echo   (Ya puedes copiar esta carpeta a un USB.)
+echo   DONE. Everything stays inside this folder.
+echo   To use it (no console window):
+echo       double-click  "YT Portable.lnk"
+echo   Alternative:  "Start-Portable.bat"
+echo   (You can now copy this folder to a USB stick.)
 echo ============================================================
 echo.
 pause
@@ -90,7 +90,7 @@ exit /b 0
 
 :fail
 echo.
-echo   Construccion interrumpida. Revisa tu conexion e intenta de nuevo.
+echo   Setup interrupted. Check your connection and try again.
 echo.
 pause
 exit /b 1
