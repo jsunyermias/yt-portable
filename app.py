@@ -34,7 +34,7 @@ BIN_DIR = BASE_DIR / "bin"
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-APP_VERSION = "0.9.2.3"
+APP_VERSION = "0.9.4"
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -547,6 +547,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/":
             self._send(200, HTML, "text/html; charset=utf-8")
+        elif path == "/api/ping":
+            self._send(200, json.dumps({"app": "yt-portable", "version": APP_VERSION}))
         elif path == "/api/queue":
             self._queue_snapshot()
         elif path == "/api/update-status":
@@ -1351,6 +1353,21 @@ def _setup_output():
         sys.stderr = log
 
 
+def find_running_instance():
+    """Busca una instancia de YT Portable ya escuchando en los puertos candidatos.
+    Devuelve el puerto si la encuentra, o None."""
+    for p in range(PORT, PORT + 20):
+        try:
+            req = urllib.request.Request(f"http://{HOST}:{p}/api/ping")
+            with urllib.request.urlopen(req, timeout=0.3) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            if data.get("app") == "yt-portable":
+                return p
+        except Exception:
+            continue
+    return None
+
+
 def make_server():
     """Crea el servidor probando puertos libres a partir de PORT."""
     last_err = None
@@ -1395,7 +1412,15 @@ def main():
     except Exception as e:
         print("  [warn] apply_pending_updates:", e)
 
-    # 2) Crear el servidor en un puerto libre
+    # 2) Si ya hay una instancia activa, abrir su interfaz y no arrancar otra
+    existing_port = find_running_instance()
+    if existing_port is not None:
+        print(f"  [info] Ya hay una instancia de YT Portable activa en el puerto {existing_port}.")
+        print(f"  Abriendo: http://{HOST}:{existing_port}")
+        webbrowser.open(f"http://{HOST}:{existing_port}")
+        return
+
+    # 3) Crear el servidor en un puerto libre
     try:
         server, port = make_server()
     except Exception as e:
