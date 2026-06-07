@@ -4,7 +4,7 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 REM ============================================================
-REM   YT Portable - Constructor (ejecutar UNA sola vez)
+REM   YT Portable - Setup (ejecutar UNA sola vez)
 REM   Descarga el motor portable dentro de esta carpeta.
 REM   No instala nada en Windows. No requiere admin.
 REM ============================================================
@@ -58,9 +58,9 @@ if exist "bin\ffmpeg.exe" (
 )
 
 REM ---- Crear lanzador (sin consola, usa pythonw) ------------
-> "Iniciar YT Portable.bat" echo @echo off
->> "Iniciar YT Portable.bat" echo cd /d "%%~dp0"
->> "Iniciar YT Portable.bat" echo start "" "%%~dp0runtime\pythonw.exe" "%%~dp0app.py"
+> "Start-Portable.bat" echo @echo off
+>> "Start-Portable.bat" echo cd /d "%%~dp0"
+>> "Start-Portable.bat" echo start "" "%%~dp0runtime\pythonw.exe" "%%~dp0app.py"
 
 REM ---- Crear acceso directo .lnk (lanza pythonw SIN ventana) -
 REM    Usa el objeto COM de PowerShell; NO ejecuta ningun .vbs.
@@ -70,7 +70,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 if exist "YT Portable.lnk" (
     echo       Acceso directo creado: "YT Portable.lnk"
 ) else (
-    echo       [aviso] No se pudo crear el .lnk; usa "Iniciar YT Portable.bat".
+    echo       [aviso] No se pudo crear el .lnk; usa "Start-Portable.bat".
 )
 
 REM ---- Limpieza ----------------------------------------------
@@ -81,7 +81,7 @@ echo ============================================================
 echo   LISTO. Todo queda dentro de esta carpeta.
 echo   Para usarlo (sin ventana de consola):
 echo       doble clic en  "YT Portable.lnk"
-echo   Alternativa:  "Iniciar YT Portable.bat"
+echo   Alternativa:  "Start-Portable.bat"
 echo   (Ya puedes copiar esta carpeta a un USB.)
 echo ============================================================
 echo.

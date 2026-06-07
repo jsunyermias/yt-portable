@@ -8,16 +8,16 @@ Todo el motor vive dentro de esta misma carpeta y se puede llevar en un USB.
 
 ## Puesta en marcha (solo la primera vez)
 
-1. Pon `app.py` y `Crear-Portable.bat` en una carpeta vacía.
-2. Doble clic en **`Crear-Portable.bat`**.
+1. Pon `app.py` y `Setup-Portable.bat` en una carpeta vacía.
+2. Doble clic en **`Setup-Portable.bat`**.
    - Descargará dentro de la carpeta: Python embebido (`runtime\`), `yt-dlp.exe` y `ffmpeg` (`bin\`).
    - Tarda unos minutos (ffmpeg es grande). No instala nada en el sistema ni pide permisos de administrador.
-3. Al terminar tendrás un nuevo archivo: **`Iniciar YT Portable.bat`**.
+3. Al terminar tendrás un nuevo archivo: **`Start-Portable.bat`**.
 
 ## Uso diario
 
 - Doble clic en **`YT Portable.lnk`** (se ejecuta **sin ventana de consola**).
-  - Si tu sistema no permitiera crear el acceso directo, usa **`Iniciar YT Portable.bat`** (igual de válido).
+  - Si tu sistema no permitiera crear el acceso directo, usa **`Start-Portable.bat`** (igual de válido).
 - Se abre solo en el navegador (`http://127.0.0.1:8765`).
 - Pega el enlace, elige **Vídeo** o **Solo audio**, la calidad/formato, y pulsa **Descargar**.
 - Puedes **Cancelar** una descarga en curso con el botón que aparece bajo la barra de progreso.
@@ -33,9 +33,9 @@ Todo el motor vive dentro de esta misma carpeta y se puede llevar en un USB.
 ```
 YT Portable\
 ├── app.py                    # Programa (servidor + interfaz)
-├── Crear-Portable.bat        # Constructor (solo 1 vez)
+├── Setup-Portable.bat        # Constructor (solo 1 vez)
 ├── YT Portable.lnk           # Lanzador SIN ventana (lo crea el constructor)
-├── Iniciar YT Portable.bat   # Lanzador alternativo
+├── Start-Portable.bat        # Lanzador alternativo
 ├── runtime\                  # Python embebido portable (incl. pythonw.exe)
 ├── bin\                      # yt-dlp.exe + ffmpeg.exe + ffprobe.exe + versiones
 └── downloads\                # Tus descargas
@@ -71,8 +71,8 @@ La comprobación de red se hace solo una vez por día (se guarda la fecha en `bi
 - Requiere Windows 10/11 (usa `curl` y PowerShell, ya incluidos en el sistema).
 
 ## Solución de problemas
-- **No abre nada o aparece una pestaña de error** → mira `app.log` (junto a `app.py`). Si ya hay otra instancia abierta, ciérrala antes (el programa busca puerto libre automáticamente, pero conviene no duplicar).
-- **"No se pudo descargar..."** → revisa tu conexión y vuelve a ejecutar `Crear-Portable.bat` (reanuda lo que falte).
+- **No abre nada o aparece una pestaña de error** → mira `app.log` (junto a `app.py`). Si ya hay otra instancia abierta, el programa la detecta automáticamente y abre esa misma interfaz en lugar de arrancar otra.
+- **"No se pudo descargar..."** → revisa tu conexión y vuelve a ejecutar `Setup-Portable.bat` (reanuda lo que falte).
 - **El antivirus bloquea `yt-dlp.exe`** → es un falso positivo habitual; permítelo o añádelo a excepciones.
-- **No se pudo crear el `.lnk`** → usa `Iniciar YT Portable.bat`.
+- **No se pudo crear el `.lnk`** → usa `Start-Portable.bat`.
 - **Las actualizaciones no se aplican** → asegúrate de cerrar el programa con el botón **Cerrar el programa** para que los binarios no estén en uso.

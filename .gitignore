@@ -1,0 +1,10 @@
+# Generado por Setup-Portable.bat / creado en tiempo de ejecución
+runtime/
+bin/
+_staging/
+_tmp/
+downloads/
+Start-Portable.bat
+*.lnk
+app.log
+error.html
