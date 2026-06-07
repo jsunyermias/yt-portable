@@ -34,7 +34,7 @@ BIN_DIR = BASE_DIR / "bin"
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-APP_VERSION = "0.9.2.2"
+APP_VERSION = "0.9.2.3"
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -393,9 +393,13 @@ def download_worker(job_id, url, mode, quality, subtitles=None):
         cmd += ["-f", fmt, "--merge-output-format", "mp4"]
 
     if mode != "audio" and subtitles and subtitles.get("enabled"):
+        ui_lang = (subtitles.get("ui_lang") or "en").strip() or "en"
+        _lang_map = {"zh": "zh-Hans", "bn": "bn-BD"}
+        sub_code = _lang_map.get(ui_lang, ui_lang)
         cmd += [
             "--write-subs",
             "--write-auto-subs",
+            "--sub-langs", sub_code,
             "--sleep-subtitles", "5",
             "--sleep-requests", "0.75",
             "--retry-sleep", "http:exp=2:60",
