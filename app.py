@@ -34,7 +34,7 @@ BIN_DIR = BASE_DIR / "bin"
 DOWNLOAD_DIR = BASE_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-APP_VERSION = "0.9.5"
+APP_VERSION = "0.9.6"
 
 HOST = "127.0.0.1"
 PORT = 8765
