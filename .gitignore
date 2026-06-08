@@ -1,9 +1,12 @@
-# Generado por Setup-Portable.bat / creado en tiempo de ejecución
+# Generado por Setup-Portable.bat / Setup-Portable.sh / creado en tiempo de ejecución
 runtime/
 bin/
 _staging/
 _tmp/
 Start-Portable.bat
+Start-Portable.sh
+*.desktop
+*.command
 /yt-portable.ico
 *.lnk
 app.log
