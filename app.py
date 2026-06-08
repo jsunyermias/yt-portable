@@ -1062,7 +1062,7 @@ function closeLang(){
 
 function setupLangSelector(){
   const list = $("#langList"), btn = $("#langBtn");
-  list.innerHTML = Object.keys(I18N).map(c =>
+  list.innerHTML = Object.keys(I18N).sort((a,b)=>LANG_NAMES[a].localeCompare(LANG_NAMES[b],"en")).map(c =>
     `<div class="lang-item${c===lang?' sel':''}" role="option" data-c="${c}">`
     + `<span class="lang-flag">${FLAGS[c]||""}</span><span>${LANG_NAMES[c]}</span></div>`
   ).join("");
