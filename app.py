@@ -2851,6 +2851,56 @@ def _to_num(v):
         return None
 
 
+def _recode_to_h264_aac(job_id, src_path):
+    """Re-encode a finished video to H.264 + AAC so every download shares the
+    same codec combo, no matter what yt-dlp picked. Writes to a temp file and
+    swaps it in afterwards; on failure or cancellation the original is left
+    untouched."""
+    ffmpeg_exe = Path(FFMPEG_LOCATION) / "ffmpeg.exe"
+    tmp_path = src_path.with_name(src_path.stem + ".recode.tmp.mp4")
+    cmd = [
+        str(ffmpeg_exe), "-y",
+        "-i", str(src_path),
+        "-map", "0:v:0", "-map", "0:a:0?",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
+        str(tmp_path),
+    ]
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except FileNotFoundError:
+        return None
+
+    with jobs_lock:
+        procs[job_id] = proc
+
+    code = proc.wait()
+
+    with jobs_lock:
+        cancelled = jobs.get(job_id, {}).get("cancel")
+        procs.pop(job_id, None)
+
+    if cancelled or code != 0 or not tmp_path.exists():
+        tmp_path.unlink(missing_ok=True)
+        return None
+
+    final_path = src_path.with_suffix(".mp4")
+    try:
+        src_path.unlink()
+        tmp_path.replace(final_path)
+    except OSError:
+        tmp_path.unlink(missing_ok=True)
+        return None
+
+    return final_path
+
+
 def download_worker(job_id, url, mode, quality, subtitles=None, playlist=False):
     with jobs_lock:
         job = jobs.setdefault(job_id, {})
@@ -2999,11 +3049,30 @@ def download_worker(job_id, url, mode, quality, subtitles=None, playlist=False):
                 "finished_at": time.time(),
             })
     elif code == 0:
+        final_title = title
+        if mode != "audio" and FFMPEG_LOCATION and title:
+            src_path = DOWNLOAD_DIR / title
+            if src_path.exists():
+                with jobs_lock:
+                    jobs[job_id].update({"status": "processing"})
+                recoded = _recode_to_h264_aac(job_id, src_path)
+                with jobs_lock:
+                    cancelled = jobs.get(job_id, {}).get("cancel")
+                if cancelled:
+                    with jobs_lock:
+                        jobs[job_id].update({
+                            "status": "cancelled",
+                            "error": "Download cancelled.",
+                            "finished_at": time.time(),
+                        })
+                    return
+                if recoded:
+                    final_title = recoded.name
         with jobs_lock:
             jobs[job_id].update({
                 "status": "done",
                 "percent": 100,
-                "title": title or "Downloaded file",
+                "title": final_title or "Downloaded file",
                 "finished_at": time.time(),
             })
     else:
