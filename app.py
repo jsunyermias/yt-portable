@@ -16,6 +16,7 @@ import ssl
 import json
 import time
 import uuid
+import ctypes
 import shutil
 import hashlib
 import zipfile
@@ -30,10 +31,31 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ---------------------------------------------------------------------------
 # Paths and configuration
 # ---------------------------------------------------------------------------
+def _user_downloads_dir():
+    """The user's actual Downloads folder (honors Windows' "Move…" relocation)."""
+    if os.name == "nt":
+        try:
+            class GUID(ctypes.Structure):
+                _fields_ = [("bytes", ctypes.c_ubyte * 16)]
+            raw = uuid.UUID("{374DE290-123F-4565-9164-39C4925E467B}").bytes_le
+            folder_id = GUID((ctypes.c_ubyte * 16)(*raw))
+            buf = ctypes.c_wchar_p()
+            hresult = ctypes.windll.shell32.SHGetKnownFolderPath(
+                ctypes.byref(folder_id), 0, 0, ctypes.byref(buf))
+            if hresult == 0:
+                path = Path(buf.value)
+                ctypes.windll.ole32.CoTaskMemFree(buf)
+                if path.exists():
+                    return path
+        except Exception:
+            pass
+    return Path.home() / "Downloads"
+
+
 BASE_DIR = Path(__file__).resolve().parent
 BIN_DIR = BASE_DIR / "bin"
-DOWNLOAD_DIR = BASE_DIR / "downloads"
-DOWNLOAD_DIR.mkdir(exist_ok=True)
+DOWNLOAD_DIR = _user_downloads_dir()
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 APP_VERSION = "0.9.5.2"
 

@@ -21,7 +21,8 @@ Todo el motor vive dentro de esta misma carpeta y se puede llevar en un USB.
 - Se abre solo en el navegador (`http://127.0.0.1:8765`).
 - Pega el enlace, elige **Vídeo** o **Solo audio**, la calidad/formato, y pulsa **Descargar**.
 - Puedes **Cancelar** una descarga en curso con el botón que aparece bajo la barra de progreso.
-- Los archivos aparecen en la subcarpeta `downloads\`.
+- Los archivos van a tu carpeta de **Descargas** de Windows (`%USERPROFILE%\Downloads`,
+  o donde la hayas reubicado mediante *Propiedades → Ubicación*).
 - Para cerrar el programa: botón **⏻ Salir** en la interfaz (como no hay consola, esta es la forma de pararlo).
 
 > A partir de aquí ya **no hace falta volver a ejecutar el constructor**.
@@ -38,9 +39,9 @@ YT Portable\
 ├── Start-Portable.bat        # Lanzador alternativo
 ├── yt-portable.ico           # Icono de la app, extraído de app.py para el acceso directo
 ├── runtime\                  # Python embebido portable (incl. pythonw.exe)
-├── bin\                      # yt-dlp.exe + ffmpeg.exe + ffprobe.exe + versiones
-└── downloads\                # Tus descargas
+└── bin\                      # yt-dlp.exe + ffmpeg.exe + ffprobe.exe + versiones
 ```
+(Las descargas van directamente a tu carpeta de Descargas de Windows, no a esta carpeta.)
 
 ---
 
