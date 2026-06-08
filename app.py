@@ -57,7 +57,7 @@ BIN_DIR = BASE_DIR / "bin"
 DOWNLOAD_DIR = _user_downloads_dir()
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "0.9.5.2"
+APP_VERSION = "0.9.5.3"
 
 # Multi-resolution .ico (favicon + shortcut icon), embedded as base64
 # so the whole program stays a single self-contained file.
