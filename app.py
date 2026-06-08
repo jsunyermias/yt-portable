@@ -2860,11 +2860,15 @@ def download_worker(job_id, url, mode, quality, subtitles=None, playlist=False):
         codec = quality if quality in ("mp3", "m4a", "opus", "wav", "flac") else "mp3"
         cmd += ["-x", "--audio-format", codec, "--audio-quality", "0"]
     else:
+        # Prefer mp4 video + m4a audio: both mux into an .mp4 container with a
+        # plain stream copy. Falling back to e.g. Opus/WebM audio forces ffmpeg
+        # to re-encode during the merge, which can silently drop the audio track.
         if quality == "best":
-            fmt = "bestvideo+bestaudio/best"
+            fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
         else:
             h = quality.replace("p", "")
-            fmt = f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best"
+            fmt = (f"bestvideo[ext=mp4][height<={h}]+bestaudio[ext=m4a]/"
+                   f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best")
         cmd += ["-f", fmt, "--merge-output-format", "mp4"]
 
     if mode != "audio" and subtitles and subtitles.get("enabled"):
