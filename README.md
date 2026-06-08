@@ -92,6 +92,7 @@ After building (these are git-ignored, not committed):
 ├── runtime/               # Embedded Python (incl. pythonw.exe)
 ├── bin/                   # yt-dlp.exe, ffmpeg.exe, ffprobe.exe, versions.json
 ├── downloads/             # Your downloads
+├── yt-portable.ico        # App icon, extracted from app.py for the shortcut
 ├── YT Portable.lnk        # Generated launcher
 └── Start-Portable.bat
 ```
