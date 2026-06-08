@@ -44,7 +44,7 @@ YT Portable\
 ---
 
 ## Idiomas
-La interfaz está disponible en 17 idiomas: español, inglés, francés, portugués, italiano, alemán, ruso, chino, japonés, coreano, hindi, bengalí, árabe, indonesio, urdu, checo y polaco. Se detecta automáticamente el del navegador y hay un selector arriba a la derecha que muestra el nombre nativo de cada idioma con su bandera (en SVG, para que se vean igual en cualquier navegador de Windows), con diseño de derecha a izquierda para árabe y urdu. La elección se recuerda. La documentación está solo en español e inglés.
+La interfaz está disponible en 21 idiomas: español, inglés, francés, portugués, italiano, alemán, ruso, chino, japonés, coreano, hindi, bengalí, árabe, indonesio, urdu, checo, polaco, catalán, esperanto, turco y vietnamita. Se detecta automáticamente el del navegador y hay un selector arriba a la derecha que muestra el nombre nativo de cada idioma con su bandera (en SVG, para que se vean igual en cualquier navegador de Windows), con diseño de derecha a izquierda para árabe y urdu. La elección se recuerda. La documentación está solo en español e inglés.
 
 ## Opciones
 - **Vídeo:** Mejor disponible / 1080p / 720p / 480p / 360p → `.mp4`

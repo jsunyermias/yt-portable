@@ -18,11 +18,12 @@ You can drop the whole folder on a USB stick and run it anywhere.
 ## Features
 
 - Clean local web UI (dark theme), opens automatically in your browser.
-- **Interface available in 17 languages** (auto-detected from the browser, with
+- **Interface available in 21 languages** (auto-detected from the browser, with
   a selector showing each language's native name and an SVG flag): Spanish,
   English, French, Portuguese, Italian, German, Russian, Chinese, Japanese,
-  Korean, Hindi, Bengali, Arabic, Indonesian, Urdu, Czech, Polish — including
-  RTL layout for Arabic and Urdu. (Docs are EN/ES only.)
+  Korean, Hindi, Bengali, Arabic, Indonesian, Urdu, Czech, Polish, Catalan,
+  Esperanto, Turkish, Vietnamese — including RTL layout for Arabic and Urdu.
+  (Docs are EN/ES only.)
 - Video (`.mp4`, up to best available / 1080p / 720p / 480p / 360p) or
   audio-only (MP3 / M4A / Opus / WAV / FLAC).
 - Optional **full playlist download** (off by default — downloads only the
