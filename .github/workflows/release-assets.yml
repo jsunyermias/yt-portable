@@ -1,0 +1,42 @@
+name: Attach per-OS release zips
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Windows zip
+        run: |
+          mkdir -p dist/windows
+          cp app.py Setup-Portable.bat README.md LEEME.md LICENSE dist/windows/
+          (cd dist/windows && zip -r ../../yt-portable-windows.zip .)
+
+      - name: Build Linux zip
+        run: |
+          mkdir -p dist/linux
+          cp app.py Setup-Portable.sh README.md LEEME.md LICENSE dist/linux/
+          (cd dist/linux && zip -r ../../yt-portable-linux.zip .)
+
+      - name: Build macOS zip
+        run: |
+          mkdir -p dist/macos
+          cp app.py Setup-Portable.sh README.md LEEME.md LICENSE dist/macos/
+          (cd dist/macos && zip -r ../../yt-portable-macos.zip .)
+
+      - name: Upload zips to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            yt-portable-windows.zip \
+            yt-portable-linux.zip \
+            yt-portable-macos.zip \
+            --clobber
