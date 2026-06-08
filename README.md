@@ -50,7 +50,9 @@ You can drop the whole folder on a USB stick and run it anywhere.
    This takes a few minutes (ffmpeg is large) and installs nothing system-wide.
 3. It creates **`YT Portable.lnk`** — double-click it to launch (no console
    window). `Start-Portable.bat` is an equivalent fallback launcher.
-4. The UI opens at `http://127.0.0.1:8765`. Downloads land in `downloads/`.
+4. The UI opens at `http://127.0.0.1:8765`. Downloads land in your user's
+   **Downloads** folder (`%USERPROFILE%\Downloads`, or wherever you've
+   relocated it via *Properties → Location*).
 
 After the first build you never need the builder again. Copy the folder
 anywhere and it just works (Windows 10/11; uses the built-in `curl` and
@@ -91,7 +93,6 @@ After building (these are git-ignored, not committed):
 ```
 ├── runtime/               # Embedded Python (incl. pythonw.exe)
 ├── bin/                   # yt-dlp.exe, ffmpeg.exe, ffprobe.exe, versions.json
-├── downloads/             # Your downloads
 ├── yt-portable.ico        # App icon, extracted from app.py for the shortcut
 ├── YT Portable.lnk        # Generated launcher
 └── Start-Portable.bat

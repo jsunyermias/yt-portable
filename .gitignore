@@ -3,7 +3,6 @@ runtime/
 bin/
 _staging/
 _tmp/
-downloads/
 Start-Portable.bat
 /yt-portable.ico
 *.lnk
