@@ -11,7 +11,9 @@ You can drop the whole folder on a USB stick and run it anywhere.
 
 > Uses only the Python standard library — no Flask, no `pip`.
 
-![YT Portable](assets/screenshot.png)
+<p align="center">
+  <img src="https://github.com/jsunyermias/yt-portable/blob/1f8da9f66809364516cc3fcffe71cd96c46c166f/assets/screenshot.png" alt="screenshot">
+</p>
 
 ---
 
