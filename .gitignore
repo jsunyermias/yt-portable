@@ -5,6 +5,7 @@ _staging/
 _tmp/
 downloads/
 Start-Portable.bat
+/yt-portable.ico
 *.lnk
 app.log
 error.html

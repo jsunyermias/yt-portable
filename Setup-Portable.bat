@@ -62,11 +62,18 @@ REM ---- Create launcher (no console, uses pythonw) -----------
 >> "Start-Portable.bat" echo cd /d "%%~dp0"
 >> "Start-Portable.bat" echo start "" "%%~dp0runtime\pythonw.exe" "%%~dp0app.py"
 
+REM ---- Extract the app icon (embedded in app.py) to a .ico file ----
+if not exist "yt-portable.ico" (
+    "runtime\python.exe" app.py --write-icon "yt-portable.ico" >nul 2>&1
+)
+set "ICON_REL=runtime\pythonw.exe"
+if exist "yt-portable.ico" set "ICON_REL=yt-portable.ico"
+
 REM ---- Create .lnk shortcut (launches pythonw with NO window)
 REM    Uses PowerShell's COM object; does NOT run any .vbs.
 echo [*] Creating windowless shortcut...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$d=(Get-Location).Path; $w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut((Join-Path $d 'YT Portable.lnk')); $s.TargetPath=(Join-Path $d 'runtime\pythonw.exe'); $s.Arguments='\"'+(Join-Path $d 'app.py')+'\"'; $s.WorkingDirectory=$d; $s.IconLocation=(Join-Path $d 'runtime\pythonw.exe'); $s.Save()" 2>nul
+  "$d=(Get-Location).Path; $w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut((Join-Path $d 'YT Portable.lnk')); $s.TargetPath=(Join-Path $d 'runtime\pythonw.exe'); $s.Arguments='\"'+(Join-Path $d 'app.py')+'\"'; $s.WorkingDirectory=$d; $s.IconLocation=(Join-Path $d '%ICON_REL%'); $s.Save()" 2>nul
 if exist "YT Portable.lnk" (
     echo       Shortcut created: "YT Portable.lnk"
 ) else (

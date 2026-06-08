@@ -36,6 +36,7 @@ YT Portable\
 ├── Setup-Portable.bat        # Constructor (solo 1 vez)
 ├── YT Portable.lnk           # Lanzador SIN ventana (lo crea el constructor)
 ├── Start-Portable.bat        # Lanzador alternativo
+├── yt-portable.ico           # Icono de la app, extraído de app.py para el acceso directo
 ├── runtime\                  # Python embebido portable (incl. pythonw.exe)
 ├── bin\                      # yt-dlp.exe + ffmpeg.exe + ffprobe.exe + versiones
 └── downloads\                # Tus descargas
