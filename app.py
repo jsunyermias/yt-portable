@@ -2618,15 +2618,35 @@ def _find_vaapi_device() -> str | None:
     return None
 
 
-def _probe_encoder(ffmpeg_exe: str, encoder: str) -> bool:
-    """Returns True if ffmpeg can produce output with this encoder."""
+def _list_available_encoders(ffmpeg_exe: str) -> set[str]:
+    """Returns the set of encoder names reported by `ffmpeg -encoders`."""
+    try:
+        r = subprocess.run(
+            [ffmpeg_exe, "-encoders"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=10, text=True, encoding="utf-8", errors="replace",
+            creationflags=CREATE_NO_WINDOW,
+        )
+        encoders = set()
+        for line in r.stdout.splitlines():
+            # Lines look like " V..... h264_nvenc           ..."
+            parts = line.split()
+            if len(parts) >= 2 and len(parts[0]) >= 2:
+                encoders.add(parts[1])
+        return encoders
+    except Exception:
+        return set()
+
+
+def _probe_encoder(ffmpeg_exe: str, encoder: str) -> tuple[bool, str]:
+    """Returns (ok, reason). reason is non-empty only on failure."""
     global _vaapi_device
     opts = _HW_ENCODER_OPTS.get(encoder, {"pre": [], "venc": []})
     pre = list(opts["pre"])
     if encoder == "h264_vaapi":
         device = _find_vaapi_device()
         if not device:
-            return False
+            return False, "no /dev/dri/renderD* device found"
         pre = ["-vaapi_device", device]
         _vaapi_device = device
     # Many HW encoders require a minimum frame size; 128×128 is safe across all.
@@ -2637,11 +2657,17 @@ def _probe_encoder(ffmpeg_exe: str, encoder: str) -> bool:
         ["-f", "null", "-"]
     )
     try:
-        r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=15, creationflags=CREATE_NO_WINDOW)
-        return r.returncode == 0
-    except Exception:
-        return False
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           timeout=15, creationflags=CREATE_NO_WINDOW,
+                           text=True, encoding="utf-8", errors="replace")
+        if r.returncode == 0:
+            return True, ""
+        # Grab the last meaningful line for diagnosis
+        lines = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+        reason = lines[-1] if lines else f"exit code {r.returncode}"
+        return False, reason
+    except Exception as exc:
+        return False, str(exc)
 
 
 def _detect_hw_encoder() -> str:
@@ -2654,10 +2680,19 @@ def _detect_hw_encoder() -> str:
             _hw_encoder_cache = "libx264"
             return _hw_encoder_cache
         ffmpeg_exe = str(Path(FFMPEG_LOCATION) / FFMPEG_BIN)
+        available = _list_available_encoders(ffmpeg_exe)
+        print("[hw-enc] probing hardware encoders…", flush=True)
         for encoder in _HW_CANDIDATES.get(sys.platform, []):
-            if _probe_encoder(ffmpeg_exe, encoder):
+            if available and encoder not in available:
+                print(f"[hw-enc]   {encoder}: not in ffmpeg build — skip", flush=True)
+                continue
+            ok, reason = _probe_encoder(ffmpeg_exe, encoder)
+            if ok:
+                print(f"[hw-enc]   {encoder}: OK  ← selected", flush=True)
                 _hw_encoder_cache = encoder
                 return encoder
+            print(f"[hw-enc]   {encoder}: {reason}", flush=True)
+        print("[hw-enc]   libx264 (software fallback)", flush=True)
         _hw_encoder_cache = "libx264"
         return "libx264"
 
@@ -3357,6 +3392,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, json.dumps({"error": "Missing link."}))
             else:
                 self._get_info(url)
+        elif path == "/api/hw-encoder":
+            encoder = _detect_hw_encoder()
+            ffmpeg_exe = str(Path(FFMPEG_LOCATION) / FFMPEG_BIN) if FFMPEG_LOCATION else None
+            available = sorted(_list_available_encoders(ffmpeg_exe)) if ffmpeg_exe else []
+            self._send(200, json.dumps({
+                "selected": encoder,
+                "platform": sys.platform,
+                "available_h264": [e for e in available if "h264" in e],
+                "candidates": _HW_CANDIDATES.get(sys.platform, []),
+            }))
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
