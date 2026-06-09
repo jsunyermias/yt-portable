@@ -2559,8 +2559,10 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 # ── Hardware-accelerated H.264 encoder detection ──────────────────────────────
 # Candidates tried in order per platform; first one that produces output wins.
+# h264_mf  = Windows Media Foundation built-in encoder (Intel/AMD/Qualcomm iGPU)
+# h264_qsv = Intel Quick Sync (also covers N100 when MF is unavailable)
 _HW_CANDIDATES = {
-    "win32":  ["h264_nvenc", "h264_amf", "h264_qsv"],
+    "win32":  ["h264_nvenc", "h264_amf", "h264_mf", "h264_qsv"],
     "darwin": ["h264_videotoolbox"],
     "linux":  ["h264_nvenc", "h264_vaapi"],
 }
@@ -2578,6 +2580,10 @@ _HW_ENCODER_OPTS = {
         "venc": ["-c:v", "h264_amf", "-quality", "quality",
                  "-qp_i", "18", "-qp_p", "20", "-pix_fmt", "yuv420p"],
     },
+    "h264_mf": {
+        "pre":  [],
+        "venc": ["-c:v", "h264_mf", "-b:v", "8M"],
+    },
     "h264_qsv": {
         "pre":  [],
         "venc": ["-c:v", "h264_qsv", "-global_quality", "18", "-preset", "medium"],
@@ -2587,7 +2593,7 @@ _HW_ENCODER_OPTS = {
         "venc": ["-c:v", "h264_videotoolbox", "-q:v", "65"],
     },
     "h264_vaapi": {
-        "pre":  ["-vaapi_device", "/dev/dri/renderD128"],
+        "pre":  [],   # device injected dynamically by _probe_encoder / _recode
         "venc": ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "18"],
     },
     "libx264": {
@@ -2599,19 +2605,40 @@ _HW_ENCODER_OPTS = {
 
 _hw_encoder_cache: str | None = None
 _hw_encoder_lock = threading.Lock()
+# Stored separately so _recode can inject it into the command
+_vaapi_device: str | None = None
+
+
+def _find_vaapi_device() -> str | None:
+    """Returns the first usable /dev/dri/renderD* node, or None."""
+    import glob
+    for node in sorted(glob.glob("/dev/dri/renderD*")):
+        if os.access(node, os.R_OK | os.W_OK):
+            return node
+    return None
 
 
 def _probe_encoder(ffmpeg_exe: str, encoder: str) -> bool:
+    """Returns True if ffmpeg can produce output with this encoder."""
+    global _vaapi_device
     opts = _HW_ENCODER_OPTS.get(encoder, {"pre": [], "venc": []})
+    pre = list(opts["pre"])
+    if encoder == "h264_vaapi":
+        device = _find_vaapi_device()
+        if not device:
+            return False
+        pre = ["-vaapi_device", device]
+        _vaapi_device = device
+    # Many HW encoders require a minimum frame size; 128×128 is safe across all.
     cmd = (
-        [ffmpeg_exe, "-y"] + opts["pre"] +
-        ["-f", "lavfi", "-i", "color=black:s=16x16:r=1", "-t", "0.05"] +
+        [ffmpeg_exe, "-y"] + pre +
+        ["-f", "lavfi", "-i", "color=black:s=128x128:r=1", "-t", "0.1"] +
         opts["venc"] +
         ["-f", "null", "-"]
     )
     try:
         r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=10, creationflags=CREATE_NO_WINDOW)
+                           timeout=15, creationflags=CREATE_NO_WINDOW)
         return r.returncode == 0
     except Exception:
         return False
@@ -3044,8 +3071,11 @@ def _recode_to_h264_aac(job_id, src_path):
     tmp_path = src_path.with_name(src_path.stem + ".recode.tmp.mp4")
     encoder = _detect_hw_encoder()
     opts = _HW_ENCODER_OPTS[encoder]
+    pre = list(opts["pre"])
+    if encoder == "h264_vaapi" and _vaapi_device:
+        pre = ["-vaapi_device", _vaapi_device]
     cmd = (
-        [str(ffmpeg_exe), "-y"] + opts["pre"] +
+        [str(ffmpeg_exe), "-y"] + pre +
         ["-i", str(src_path),
          "-map", "0:v:0", "-map", "0:a:0?"] +
         opts["venc"] +
