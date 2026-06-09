@@ -2557,6 +2557,84 @@ FFMPEG_LOCATION = str(BIN_DIR) if (BIN_DIR / FFMPEG_BIN).exists() else None
 # Avoid popping up console windows on Windows
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
+# ── Hardware-accelerated H.264 encoder detection ──────────────────────────────
+# Candidates tried in order per platform; first one that produces output wins.
+_HW_CANDIDATES = {
+    "win32":  ["h264_nvenc", "h264_amf", "h264_qsv"],
+    "darwin": ["h264_videotoolbox"],
+    "linux":  ["h264_nvenc", "h264_vaapi"],
+}
+
+# pre  = args inserted between `ffmpeg -y` and `-i`
+# venc = args that replace the video codec block (must include -c:v)
+_HW_ENCODER_OPTS = {
+    "h264_nvenc": {
+        "pre":  [],
+        "venc": ["-c:v", "h264_nvenc", "-rc", "vbr", "-cq", "18",
+                 "-preset", "p4", "-pix_fmt", "yuv420p"],
+    },
+    "h264_amf": {
+        "pre":  [],
+        "venc": ["-c:v", "h264_amf", "-quality", "quality",
+                 "-qp_i", "18", "-qp_p", "20", "-pix_fmt", "yuv420p"],
+    },
+    "h264_qsv": {
+        "pre":  [],
+        "venc": ["-c:v", "h264_qsv", "-global_quality", "18", "-preset", "medium"],
+    },
+    "h264_videotoolbox": {
+        "pre":  [],
+        "venc": ["-c:v", "h264_videotoolbox", "-q:v", "65"],
+    },
+    "h264_vaapi": {
+        "pre":  ["-vaapi_device", "/dev/dri/renderD128"],
+        "venc": ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "18"],
+    },
+    "libx264": {
+        "pre":  [],
+        "venc": ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                 "-pix_fmt", "yuv420p"],
+    },
+}
+
+_hw_encoder_cache: str | None = None
+_hw_encoder_lock = threading.Lock()
+
+
+def _probe_encoder(ffmpeg_exe: str, encoder: str) -> bool:
+    opts = _HW_ENCODER_OPTS.get(encoder, {"pre": [], "venc": []})
+    cmd = (
+        [ffmpeg_exe, "-y"] + opts["pre"] +
+        ["-f", "lavfi", "-i", "color=black:s=16x16:r=1", "-t", "0.05"] +
+        opts["venc"] +
+        ["-f", "null", "-"]
+    )
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=10, creationflags=CREATE_NO_WINDOW)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _detect_hw_encoder() -> str:
+    """Probes hardware encoders once, caches and returns the best available."""
+    global _hw_encoder_cache
+    with _hw_encoder_lock:
+        if _hw_encoder_cache is not None:
+            return _hw_encoder_cache
+        if not FFMPEG_LOCATION:
+            _hw_encoder_cache = "libx264"
+            return _hw_encoder_cache
+        ffmpeg_exe = str(Path(FFMPEG_LOCATION) / FFMPEG_BIN)
+        for encoder in _HW_CANDIDATES.get(sys.platform, []):
+            if _probe_encoder(ffmpeg_exe, encoder):
+                _hw_encoder_cache = encoder
+                return encoder
+        _hw_encoder_cache = "libx264"
+        return "libx264"
+
+
 # --- Dependency self-update ---
 STAGING_DIR = BASE_DIR / "_staging"          # staging area (applied on next startup)
 VERSIONS_FILE = BIN_DIR / "versions.json"    # installed versions
@@ -2958,20 +3036,23 @@ def _to_num(v):
 
 def _recode_to_h264_aac(job_id, src_path):
     """Re-encode a finished video to H.264 + AAC so every download shares the
-    same codec combo, no matter what yt-dlp picked. Writes to a temp file and
-    swaps it in afterwards; on failure or cancellation the original is left
-    untouched."""
+    same codec combo, no matter what yt-dlp picked. Uses the best hardware
+    encoder available on this machine (detected once and cached). Writes to a
+    temp file and swaps it in afterwards; on failure or cancellation the
+    original is left untouched."""
     ffmpeg_exe = Path(FFMPEG_LOCATION) / FFMPEG_BIN
     tmp_path = src_path.with_name(src_path.stem + ".recode.tmp.mp4")
-    cmd = [
-        str(ffmpeg_exe), "-y",
-        "-i", str(src_path),
-        "-map", "0:v:0", "-map", "0:a:0?",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
-        "-movflags", "+faststart",
-        str(tmp_path),
-    ]
+    encoder = _detect_hw_encoder()
+    opts = _HW_ENCODER_OPTS[encoder]
+    cmd = (
+        [str(ffmpeg_exe), "-y"] + opts["pre"] +
+        ["-i", str(src_path),
+         "-map", "0:v:0", "-map", "0:a:0?"] +
+        opts["venc"] +
+        ["-c:a", "aac", "-b:a", "192k",
+         "-movflags", "+faststart",
+         str(tmp_path)]
+    )
     try:
         proc = subprocess.Popen(
             cmd,
