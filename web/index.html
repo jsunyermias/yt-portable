@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT Portable</title>
+<link rel="icon" href="/favicon.ico" type="image/x-icon">
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel-2:#1c232d; --border:#2d333b;
+    --text:#e6edf3; --muted:#8b949e; --accent:#ff3b3b; --accent-2:#ff6b6b;
+    --ok:#3fb950; --err:#f85149; --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+    background:radial-gradient(1200px 600px at 50% -10%,#1b2230,transparent),var(--bg);
+    color:var(--text); min-height:100vh; display:flex; align-items:flex-start;
+    justify-content:center; padding:48px 16px;
+  }
+  .card{
+    width:100%; max-width:560px; background:var(--panel);
+    border:1px solid var(--border); border-radius:var(--radius);
+    padding:32px; box-shadow:0 20px 60px rgba(0,0,0,.4);
+  }
+  .logo{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  .logo .play{
+    width:40px;height:40px;border-radius:10px;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    display:flex;align-items:center;justify-content:center;
+  }
+  .logo .play svg{width:18px;height:18px;fill:#fff;margin-left:2px}
+  h1{font-size:20px;font-weight:700;letter-spacing:.2px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:24px}
+  label{display:block;font-size:13px;color:var(--muted);margin-bottom:8px;font-weight:600}
+  input[type=text]{
+    width:100%;padding:13px 14px;background:var(--panel-2);
+    border:1px solid var(--border);border-radius:10px;color:var(--text);
+    font-size:14px;outline:none;transition:border .15s;
+  }
+  input[type=text]:focus{border-color:var(--accent)}
+  .row{display:flex;gap:12px;margin-top:20px}
+  .row > div{flex:1}
+  .seg{display:flex;background:var(--panel-2);border:1px solid var(--border);
+    border-radius:10px;padding:4px;gap:4px}
+  .seg button{
+    flex:1;padding:10px;border:none;background:transparent;color:var(--muted);
+    border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s;
+  }
+  .seg button.active{background:var(--accent);color:#fff}
+  select{
+    width:100%;padding:11px 12px;background:var(--panel-2);
+    border:1px solid var(--border);border-radius:10px;color:var(--text);
+    font-size:14px;outline:none;cursor:pointer;
+  }
+  .go{
+    width:100%;margin-top:24px;padding:14px;border:none;border-radius:10px;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    color:#fff;font-size:15px;font-weight:700;cursor:pointer;transition:.15s;
+  }
+  .go:hover{filter:brightness(1.08)}
+  .go:disabled{opacity:.5;cursor:not-allowed}
+  @keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
+  .msg{margin-top:18px;font-size:13px;padding:12px 14px;border-radius:10px;display:none;
+    word-break:break-word}
+  .msg.ok{display:block;background:rgba(63,185,80,.12);
+    border:1px solid rgba(63,185,80,.4);color:var(--ok)}
+  .msg.err{display:block;background:rgba(248,81,73,.12);
+    border:1px solid rgba(248,81,73,.4);color:var(--err)}
+  .msg.warn{display:block;background:rgba(210,153,34,.12);
+    border:1px solid rgba(210,153,34,.4);color:#d29922}
+  .foot{margin-top:22px;display:flex;justify-content:space-between;align-items:center}
+  .link{background:none;border:none;color:var(--muted);font-size:12px;
+    cursor:pointer;text-decoration:underline;padding:0}
+  .link:hover{color:var(--text)}
+  .pill{font-size:11px;color:var(--muted);background:var(--panel-2);
+    border:1px solid var(--border);padding:4px 10px;border-radius:999px}
+  .quit-btn{
+    display:block;width:100%;margin-top:18px;padding:16px;
+    border:1px solid #5a2326;border-radius:10px;
+    background:rgba(248,81,73,.14);color:#ff8079;
+    font-size:16px;font-weight:700;cursor:pointer;transition:.15s;
+  }
+  .quit-btn:hover{background:rgba(248,81,73,.24);color:#ffb3ad}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .lang-wrap{position:relative}
+  .lang-btn{display:flex;align-items:center;gap:7px;background:var(--panel-2);
+    border:1px solid var(--border);color:var(--text);border-radius:8px;
+    padding:7px 10px;font-size:13px;cursor:pointer;max-width:60vw}
+  .lang-btn:hover{border-color:#3d4450}
+  .lang-btn .caret{color:var(--muted);font-size:10px;margin-left:2px}
+  .lang-flag{width:20px;height:14px;border-radius:2px;overflow:hidden;
+    display:inline-block;flex:0 0 auto;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
+  .lang-flag svg{display:block;width:100%;height:100%}
+  .lang-list{position:absolute;top:calc(100% + 6px);right:0;background:var(--panel);
+    border:1px solid var(--border);border-radius:10px;padding:6px;max-height:300px;
+    overflow:auto;z-index:20;min-width:190px;box-shadow:0 12px 30px rgba(0,0,0,.5);display:none}
+  .lang-list.open{display:block}
+  .lang-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:7px;
+    cursor:pointer;font-size:13px;color:var(--text);white-space:nowrap}
+  .lang-item:hover,.lang-item.sel{background:var(--panel-2)}
+  [dir="rtl"] .lang-list{right:auto;left:0}
+  [dir="rtl"] .foot{flex-direction:row-reverse}
+  .sub-ctrl{display:flex;align-items:center;gap:12px}
+  .tog{display:inline-flex;align-items:center;cursor:pointer;user-select:none;flex:0 0 auto}
+  .tog input[type=checkbox]{position:absolute;opacity:0;width:0;height:0}
+  .knob{width:36px;height:20px;background:var(--panel-2);border:1px solid var(--border);
+    border-radius:10px;position:relative;transition:.2s;flex:0 0 auto}
+  .knob::after{content:"";position:absolute;width:14px;height:14px;top:2px;left:2px;
+    background:var(--muted);border-radius:50%;transition:.2s}
+  .tog input:checked + .knob{background:var(--accent);border-color:var(--accent)}
+  .tog input:checked + .knob::after{left:18px;background:#fff}
+  #subLang{flex:1}
+  .vinfo{margin-top:10px;padding:10px 12px;background:var(--panel-2);
+    border:1px solid var(--border);border-radius:10px}
+  .vinfo-title{font-size:13px;font-weight:600;color:var(--text);
+    overflow:hidden;text-overflow:ellipsis;display:-webkit-box;
+    -webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .vinfo-meta{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:6px;
+    font-size:12px;color:var(--muted)}
+  .vinfo-meta span:empty{display:none}
+  .queue-wrap{margin-top:24px}
+  .queue-head{display:flex;justify-content:space-between;align-items:center;
+    font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px}
+  .queue-count{font-size:11px;color:var(--muted);font-weight:400}
+  .queue-list{display:flex;flex-direction:column;gap:8px}
+  .qitem{padding:10px 12px;background:var(--panel-2);border:1px solid var(--border);
+    border-radius:10px}
+  .qitem-row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .qitem-title{font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;flex:1}
+  .qitem-x{flex:0 0 auto;background:none;border:none;color:var(--muted);
+    cursor:pointer;font-size:14px;line-height:1;padding:4px 7px;border-radius:6px}
+  .qitem-x:hover{color:var(--text);background:rgba(255,255,255,.06)}
+  .qitem-meta{font-size:11px;color:var(--muted);margin-top:4px}
+  .qitem.err .qitem-meta{color:var(--err)}
+  .qitem.done .qitem-meta{color:var(--ok)}
+  .qitem-bar{height:6px;background:var(--panel);border-radius:999px;overflow:hidden;
+    border:1px solid var(--border);margin-top:8px}
+  .qitem-bar > i{display:block;height:100%;width:0;border-radius:999px;
+    background:linear-gradient(90deg,var(--accent),var(--accent-2));transition:width .3s}
+  .qitem-bar.indet > i{width:35%;animation:slide 1.1s infinite ease-in-out}
+  [dir="rtl"] .qitem-row{flex-direction:row-reverse}
+  [dir="rtl"] .queue-head{flex-direction:row-reverse}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="topbar">
+      <div class="logo">
+        <div class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+        <div><h1>YT Portable</h1></div>
+      </div>
+      <div class="lang-wrap" id="langWrap">
+        <button class="lang-btn" id="langBtn" type="button" aria-haspopup="listbox" aria-expanded="false">
+          <span class="lang-flag" id="langBtnFlag"></span>
+          <span id="langBtnName"></span>
+          <span class="caret">▾</span>
+        </button>
+        <div class="lang-list" id="langList" role="listbox"></div>
+      </div>
+    </div>
+    <div class="sub" id="t-sub">Descarga vídeo o audio de YouTube. Todo en local.</div>
+
+    <label for="url" id="t-linkLabel">Enlace</label>
+    <input id="url" type="text" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
+
+    <div class="vinfo" id="vinfo" style="display:none">
+      <div class="vinfo-title" id="vinfoTitle"></div>
+      <div class="vinfo-meta">
+        <span id="vinfoChannel"></span>
+        <span id="vinfoDuration"></span>
+        <span id="vinfoDate"></span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label id="t-formatLabel">Formato</label>
+        <div class="seg" id="mode">
+          <button data-mode="video" class="active">🎬 <span id="t-video">Vídeo</span></button>
+          <button data-mode="audio">🎵 <span id="t-audioOnly">Solo audio</span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label id="qlabel">Calidad de vídeo</label>
+        <select id="quality"></select>
+      </div>
+    </div>
+
+    <div class="row" id="playlistRow">
+      <div>
+        <label id="t-playlistLabel">Playlist completa</label>
+        <div class="sub-ctrl">
+          <label class="tog">
+            <input type="checkbox" id="playlistToggle">
+            <span class="knob"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="row" id="subRow">
+      <div>
+        <label id="t-subtitlesLabel">Subtítulos</label>
+        <div class="sub-ctrl">
+          <label class="tog">
+            <input type="checkbox" id="subToggle">
+            <span class="knob"></span>
+          </label>
+          <span id="subInfo" style="display:none;font-size:12px;color:var(--muted)"></span>
+        </div>
+        <div id="subWarn" style="display:none;font-size:12px;color:#d29922;margin-top:6px"></div>
+      </div>
+    </div>
+
+    <div class="row" id="recodeRow">
+      <div>
+        <label id="t-recodeLabel">Recodificación</label>
+        <label class="tog">
+          <input type="checkbox" id="recodeToggle">
+          <span class="knob"></span>
+        </label>
+        <div id="recodeWarnEl" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+      </div>
+    </div>
+
+    <button class="go" id="go">Descargar</button>
+
+    <div class="msg" id="msg"></div>
+    <div class="msg warn" id="rateLimitBanner" style="display:none"></div>
+
+    <div class="queue-wrap" id="queueWrap" style="display:none">
+      <div class="queue-head">
+        <span id="t-queueTitle">Cola de descargas</span>
+        <span class="queue-count" id="queueCount"></span>
+      </div>
+      <div class="queue-list" id="queueList"></div>
+    </div>
+
+    <div class="foot">
+      <button class="link" id="openFolder">📂 <span id="t-openFolder">Abrir carpeta de descargas</span></button>
+      <span class="pill">v__VERSION__ · local</span>
+    </div>
+    <div id="ustatus" style="margin-top:12px;font-size:11px;color:var(--muted);text-align:center;min-height:14px"></div>
+    <button class="quit-btn" id="quit">⏻ <span id="t-closeProgram">Cerrar el programa</span></button>
+  </div>
+
+<script>
+const I18N = {
+  es:{sub:"Descarga vídeo o audio de YouTube. Todo en local.",linkLabel:"Enlace",formatLabel:"Formato",video:"Vídeo",audioOnly:"Solo audio",videoQuality:"Calidad de vídeo",audioFormat:"Formato de audio",qualityBest:"Mejor disponible",download:"Descargar",downloading:"Descargando…",preparing:"Preparando…",cancel:"Cancelar",cancelling:"Cancelando…",convertingAudio:"Convirtiendo audio…",mergingVideo:"Uniendo vídeo y audio…",completed:"Completado",ready:"Listo",cancelledMsg:"Descarga cancelada.",pasteFirst:"Pega un enlace primero.",startError:"Error al iniciar.",unknownError:"Error desconocido",openFolder:"Abrir carpeta de descargas",closeProgram:"Cerrar el programa",closedMsg:"Programa cerrado. Ya puedes cerrar esta pestaña.",u_checking:"Buscando actualizaciones…",u_pending:"Actualización lista: se aplicará al reiniciar.",u_uptodate:"Dependencias al día.",u_checked_today:"Comprobación ya realizada hoy.",u_check_failed:"No se pudo comprobar actualizaciones.",n_ytdlp_nochecksum:"yt-dlp: sin checksum, se omite",n_ytdlp_badchecksum:"yt-dlp: checksum no coincide, descartado",n_ytdlp_fail:"yt-dlp: fallo al comprobar",n_ffmpeg_fail:"ffmpeg: fallo al comprobar",e_ytdlp_missing:"No se encuentra yt-dlp. Vuelve a ejecutar el constructor.",playlist:"Playlist completa",subtitles:"Subtítulos",subtitlesOrig:"Idioma original",subtitlesWarn:"⚠ Puede fallar a veces (límite de YouTube). A veces funciona mejor si el idioma del vídeo coincide con el del programa.",subtitlesFetching:"Detectando idioma original…",rateLimitBanner:"⚠ YouTube está limitando las descargas (error 429). Prueba a desactivar los subtítulos y vuelve a intentarlo.",videoInfoLoading:"Cargando información…",queueTitle:"Cola de descargas",queued:"En cola",queueFull:"Cola llena (máx. 16).",remove:"Quitar",recode:"Recodificación",recodeWarn:"Recodifica el vídeo a H.264+AAC. Úsalo si el vídeo descargado tiene problemas de reproducción. Es probable que tarde bastante más de lo habitual."},
+  en:{sub:"Download video or audio from YouTube. All local.",linkLabel:"Link",formatLabel:"Format",video:"Video",audioOnly:"Audio only",videoQuality:"Video quality",audioFormat:"Audio format",qualityBest:"Best available",download:"Download",downloading:"Downloading…",preparing:"Preparing…",cancel:"Cancel",cancelling:"Cancelling…",convertingAudio:"Converting audio…",mergingVideo:"Merging video and audio…",completed:"Completed",ready:"Done",cancelledMsg:"Download cancelled.",pasteFirst:"Paste a link first.",startError:"Couldn't start.",unknownError:"Unknown error",openFolder:"Open downloads folder",closeProgram:"Close the program",closedMsg:"Program closed. You can close this tab.",u_checking:"Checking for updates…",u_pending:"Update ready: it will be applied on restart.",u_uptodate:"Dependencies up to date.",u_checked_today:"Already checked today.",u_check_failed:"Couldn't check for updates.",n_ytdlp_nochecksum:"yt-dlp: no checksum, skipped",n_ytdlp_badchecksum:"yt-dlp: checksum mismatch, discarded",n_ytdlp_fail:"yt-dlp: check failed",n_ffmpeg_fail:"ffmpeg: check failed",e_ytdlp_missing:"yt-dlp not found. Run the builder again.",playlist:"Full playlist",subtitles:"Subtitles",subtitlesOrig:"Original language",subtitlesWarn:"⚠ May occasionally fail (YouTube rate limit). It sometimes works better if the video’s language matches the program’s language.",subtitlesFetching:"Detecting original language…",rateLimitBanner:"⚠ YouTube is rate-limiting downloads (error 429). Try turning off subtitles and retrying.",videoInfoLoading:"Loading info…",queueTitle:"Download queue",queued:"Queued",queueFull:"Queue full (max. 16).",remove:"Remove",recode:"Re-encoding",recodeWarn:"Re-encodes the video to H.264+AAC. Use it if the downloaded video has playback issues. It will likely take significantly longer than the download itself."},
+  fr:{sub:"Téléchargez une vidéo ou un audio depuis YouTube. Tout en local.",linkLabel:"Lien",formatLabel:"Format",video:"Vidéo",audioOnly:"Audio seul",videoQuality:"Qualité vidéo",audioFormat:"Format audio",qualityBest:"Meilleure disponible",download:"Télécharger",downloading:"Téléchargement…",preparing:"Préparation…",cancel:"Annuler",cancelling:"Annulation…",convertingAudio:"Conversion audio…",mergingVideo:"Fusion vidéo et audio…",completed:"Terminé",ready:"Prêt",cancelledMsg:"Téléchargement annulé.",pasteFirst:"Collez d'abord un lien.",startError:"Impossible de démarrer.",unknownError:"Erreur inconnue",openFolder:"Ouvrir le dossier des téléchargements",closeProgram:"Fermer le programme",closedMsg:"Programme fermé. Vous pouvez fermer cet onglet.",u_checking:"Recherche de mises à jour…",u_pending:"Mise à jour prête : appliquée au redémarrage.",u_uptodate:"Dépendances à jour.",u_checked_today:"Déjà vérifié aujourd'hui.",u_check_failed:"Impossible de vérifier les mises à jour.",n_ytdlp_nochecksum:"yt-dlp : pas de somme de contrôle, ignoré",n_ytdlp_badchecksum:"yt-dlp : somme de contrôle incorrecte, rejeté",n_ytdlp_fail:"yt-dlp : échec de la vérification",n_ffmpeg_fail:"ffmpeg : échec de la vérification",e_ytdlp_missing:"yt-dlp introuvable. Relancez le constructeur.",playlist:"Playlist complète",subtitles:"Sous-titres",subtitlesOrig:"Langue originale",subtitlesWarn:"⚠ Peut parfois échouer (limite de YouTube). Cela fonctionne parfois mieux si la langue de la vidéo correspond à celle du programme.",subtitlesFetching:"Détection de la langue d'origine…",rateLimitBanner:"⚠ YouTube limite les téléchargements (erreur 429). Essayez de désactiver les sous-titres et réessayez.",videoInfoLoading:"Chargement des informations…",queueTitle:"File de téléchargement",queued:"En attente",queueFull:"File pleine (max. 16).",remove:"Retirer",recode:"Réencodage",recodeWarn:"Réencode la vidéo en H.264+AAC. À utiliser si la vidéo téléchargée a des problèmes de lecture. Cela prendra probablement bien plus de temps que le téléchargement."},
+  pt:{sub:"Baixe vídeo ou áudio do YouTube. Tudo local.",linkLabel:"Link",formatLabel:"Formato",video:"Vídeo",audioOnly:"Somente áudio",videoQuality:"Qualidade do vídeo",audioFormat:"Formato de áudio",qualityBest:"Melhor disponível",download:"Baixar",downloading:"Baixando…",preparing:"Preparando…",cancel:"Cancelar",cancelling:"Cancelando…",convertingAudio:"Convertendo áudio…",mergingVideo:"Juntando vídeo e áudio…",completed:"Concluído",ready:"Pronto",cancelledMsg:"Download cancelado.",pasteFirst:"Cole um link primeiro.",startError:"Não foi possível iniciar.",unknownError:"Erro desconhecido",openFolder:"Abrir pasta de downloads",closeProgram:"Fechar o programa",closedMsg:"Programa fechado. Você pode fechar esta aba.",u_checking:"Procurando atualizações…",u_pending:"Atualização pronta: será aplicada ao reiniciar.",u_uptodate:"Dependências atualizadas.",u_checked_today:"Já verificado hoje.",u_check_failed:"Não foi possível verificar atualizações.",n_ytdlp_nochecksum:"yt-dlp: sem checksum, ignorado",n_ytdlp_badchecksum:"yt-dlp: checksum não confere, descartado",n_ytdlp_fail:"yt-dlp: falha ao verificar",n_ffmpeg_fail:"ffmpeg: falha ao verificar",e_ytdlp_missing:"yt-dlp não encontrado. Execute o construtor novamente.",playlist:"Playlist completa",subtitles:"Legendas",subtitlesOrig:"Idioma original",subtitlesWarn:"⚠ Pode falhar às vezes (limite do YouTube). Às vezes funciona melhor se o idioma do vídeo coincidir com o do programa.",subtitlesFetching:"Detectando idioma original…",rateLimitBanner:"⚠ O YouTube está a limitar as transferências (erro 429). Tente desativar as legendas e tente outra vez.",videoInfoLoading:"Carregando informações…",queueTitle:"Fila de downloads",queued:"Na fila",queueFull:"Fila cheia (máx. 16).",remove:"Remover",recode:"Recodificação",recodeWarn:"Recodifica o vídeo para H.264+AAC. Use se o vídeo baixado tiver problemas de reprodução. É provável que demore muito mais do que o download em si."},
+  it:{sub:"Scarica video o audio da YouTube. Tutto in locale.",linkLabel:"Link",formatLabel:"Formato",video:"Video",audioOnly:"Solo audio",videoQuality:"Qualità video",audioFormat:"Formato audio",qualityBest:"Migliore disponibile",download:"Scarica",downloading:"Scaricamento…",preparing:"Preparazione…",cancel:"Annulla",cancelling:"Annullamento…",convertingAudio:"Conversione audio…",mergingVideo:"Unione video e audio…",completed:"Completato",ready:"Pronto",cancelledMsg:"Download annullato.",pasteFirst:"Incolla prima un link.",startError:"Impossibile avviare.",unknownError:"Errore sconosciuto",openFolder:"Apri la cartella dei download",closeProgram:"Chiudi il programma",closedMsg:"Programma chiuso. Puoi chiudere questa scheda.",u_checking:"Ricerca aggiornamenti…",u_pending:"Aggiornamento pronto: verrà applicato al riavvio.",u_uptodate:"Dipendenze aggiornate.",u_checked_today:"Già verificato oggi.",u_check_failed:"Impossibile verificare gli aggiornamenti.",n_ytdlp_nochecksum:"yt-dlp: nessun checksum, ignorato",n_ytdlp_badchecksum:"yt-dlp: checksum non corrisponde, scartato",n_ytdlp_fail:"yt-dlp: verifica non riuscita",n_ffmpeg_fail:"ffmpeg: verifica non riuscita",e_ytdlp_missing:"yt-dlp non trovato. Esegui di nuovo il costruttore.",playlist:"Playlist completa",subtitles:"Sottotitoli",subtitlesOrig:"Lingua originale",subtitlesWarn:"⚠ Può talvolta non riuscire (limite di YouTube). A volte funziona meglio se la lingua del video corrisponde a quella del programma.",subtitlesFetching:"Rilevamento della lingua originale…",rateLimitBanner:"⚠ YouTube sta limitando i download (errore 429). Prova a disattivare i sottotitoli e riprova.",videoInfoLoading:"Caricamento informazioni…",queueTitle:"Coda di download",queued:"In coda",queueFull:"Coda piena (max. 16).",remove:"Rimuovi",recode:"Ricodifica",recodeWarn:"Ricodifica il video in H.264+AAC. Usalo se il video scaricato ha problemi di riproduzione. Richiederà probabilmente molto più tempo del download stesso."},
+  de:{sub:"Video oder Audio von YouTube herunterladen. Alles lokal.",linkLabel:"Link",formatLabel:"Format",video:"Video",audioOnly:"Nur Audio",videoQuality:"Videoqualität",audioFormat:"Audioformat",qualityBest:"Beste verfügbare",download:"Herunterladen",downloading:"Wird heruntergeladen…",preparing:"Vorbereitung…",cancel:"Abbrechen",cancelling:"Wird abgebrochen…",convertingAudio:"Audio wird konvertiert…",mergingVideo:"Video und Audio werden zusammengeführt…",completed:"Fertig",ready:"Fertig",cancelledMsg:"Download abgebrochen.",pasteFirst:"Füge zuerst einen Link ein.",startError:"Konnte nicht starten.",unknownError:"Unbekannter Fehler",openFolder:"Download-Ordner öffnen",closeProgram:"Programm schließen",closedMsg:"Programm geschlossen. Du kannst diesen Tab schließen.",u_checking:"Suche nach Updates…",u_pending:"Update bereit: wird beim Neustart angewendet.",u_uptodate:"Abhängigkeiten aktuell.",u_checked_today:"Heute bereits geprüft.",u_check_failed:"Updates konnten nicht geprüft werden.",n_ytdlp_nochecksum:"yt-dlp: keine Prüfsumme, übersprungen",n_ytdlp_badchecksum:"yt-dlp: Prüfsumme stimmt nicht, verworfen",n_ytdlp_fail:"yt-dlp: Prüfung fehlgeschlagen",n_ffmpeg_fail:"ffmpeg: Prüfung fehlgeschlagen",e_ytdlp_missing:"yt-dlp nicht gefunden. Führe den Builder erneut aus.",playlist:"Komplette Playlist",subtitles:"Untertitel",subtitlesOrig:"Originalsprache",subtitlesWarn:"⚠ Kann gelegentlich fehlschlagen (YouTube-Limit). Es funktioniert manchmal besser, wenn die Sprache des Videos mit der des Programms übereinstimmt.",subtitlesFetching:"Originalsprache wird erkannt…",rateLimitBanner:"⚠ YouTube begrenzt gerade die Downloads (Fehler 429). Versuche es ohne Untertitel erneut.",videoInfoLoading:"Informationen werden geladen…",queueTitle:"Download-Warteschlange",queued:"Wartend",queueFull:"Warteschlange voll (max. 16).",remove:"Entfernen",recode:"Neukodierung",recodeWarn:"Kodiert das Video in H.264+AAC um. Verwenden, wenn das heruntergeladene Video Wiedergabeprobleme hat. Dauert wahrscheinlich deutlich länger als der Download selbst."},
+  ru:{sub:"Скачивайте видео или аудио с YouTube. Всё локально.",linkLabel:"Ссылка",formatLabel:"Формат",video:"Видео",audioOnly:"Только аудио",videoQuality:"Качество видео",audioFormat:"Формат аудио",qualityBest:"Наилучшее доступное",download:"Скачать",downloading:"Загрузка…",preparing:"Подготовка…",cancel:"Отмена",cancelling:"Отмена…",convertingAudio:"Конвертация аудио…",mergingVideo:"Объединение видео и аудио…",completed:"Готово",ready:"Готово",cancelledMsg:"Загрузка отменена.",pasteFirst:"Сначала вставьте ссылку.",startError:"Не удалось запустить.",unknownError:"Неизвестная ошибка",openFolder:"Открыть папку загрузок",closeProgram:"Закрыть программу",closedMsg:"Программа закрыта. Можете закрыть эту вкладку.",u_checking:"Проверка обновлений…",u_pending:"Обновление готово: применится при перезапуске.",u_uptodate:"Зависимости актуальны.",u_checked_today:"Сегодня уже проверено.",u_check_failed:"Не удалось проверить обновления.",n_ytdlp_nochecksum:"yt-dlp: нет контрольной суммы, пропущено",n_ytdlp_badchecksum:"yt-dlp: контрольная сумма не совпадает, отклонено",n_ytdlp_fail:"yt-dlp: ошибка проверки",n_ffmpeg_fail:"ffmpeg: ошибка проверки",e_ytdlp_missing:"yt-dlp не найден. Запустите конструктор снова.",playlist:"Весь плейлист",subtitles:"Субтитры",subtitlesOrig:"Исходный язык",subtitlesWarn:"⚠ Иногда может не сработать (ограничение YouTube). Иногда это работает лучше, если язык видео совпадает с языком программы.",subtitlesFetching:"Определение исходного языка…",rateLimitBanner:"⚠ YouTube ограничивает количество загрузок (ошибка 429). Попробуйте отключить субтитры и повторить попытку.",videoInfoLoading:"Загрузка информации…",queueTitle:"Очередь загрузок",queued:"В очереди",queueFull:"Очередь заполнена (макс. 16).",remove:"Удалить",recode:"Перекодирование",recodeWarn:"Перекодирует видео в H.264+AAC. Используйте, если скачанное видео не воспроизводится корректно. Вероятно, займёт значительно больше времени, чем сама загрузка."},
+  zh:{sub:"从 YouTube 下载视频或音频。全部在本地。",linkLabel:"链接",formatLabel:"格式",video:"视频",audioOnly:"仅音频",videoQuality:"视频质量",audioFormat:"音频格式",qualityBest:"最佳可用",download:"下载",downloading:"下载中…",preparing:"准备中…",cancel:"取消",cancelling:"正在取消…",convertingAudio:"正在转换音频…",mergingVideo:"正在合并视频和音频…",completed:"已完成",ready:"完成",cancelledMsg:"下载已取消。",pasteFirst:"请先粘贴链接。",startError:"无法启动。",unknownError:"未知错误",openFolder:"打开下载文件夹",closeProgram:"关闭程序",closedMsg:"程序已关闭。您可以关闭此标签页。",u_checking:"正在检查更新…",u_pending:"更新已就绪：将在重启后应用。",u_uptodate:"依赖项已是最新。",u_checked_today:"今天已检查。",u_check_failed:"无法检查更新。",n_ytdlp_nochecksum:"yt-dlp：无校验和，已跳过",n_ytdlp_badchecksum:"yt-dlp：校验和不匹配，已丢弃",n_ytdlp_fail:"yt-dlp：检查失败",n_ffmpeg_fail:"ffmpeg：检查失败",e_ytdlp_missing:"找不到 yt-dlp。请重新运行构建器。",playlist:"完整播放列表",subtitles:"字幕",subtitlesOrig:"原始语言",subtitlesWarn:"⚠ 有时可能会失败(YouTube 限制)。如果视频语言与程序语言一致,有时效果会更好。",subtitlesFetching:"正在检测原始语言…",rateLimitBanner:"⚠ YouTube 正在限制下载速率(错误 429)。请尝试关闭字幕后重试。",videoInfoLoading:"正在加载信息…",queueTitle:"下载队列",queued:"排队中",queueFull:"队列已满（最多 16 个）。",remove:"移除",recode:"重新编码",recodeWarn:"将视频重新编码为 H.264+AAC。若下载的视频播放有问题，请使用此选项。所需时间可能远超下载本身。"},
+  ja:{sub:"YouTube から動画や音声をダウンロード。すべてローカルで。",linkLabel:"リンク",formatLabel:"形式",video:"動画",audioOnly:"音声のみ",videoQuality:"動画の画質",audioFormat:"音声の形式",qualityBest:"利用可能な最高画質",download:"ダウンロード",downloading:"ダウンロード中…",preparing:"準備中…",cancel:"キャンセル",cancelling:"キャンセル中…",convertingAudio:"音声を変換中…",mergingVideo:"動画と音声を結合中…",completed:"完了",ready:"完了",cancelledMsg:"ダウンロードをキャンセルしました。",pasteFirst:"まずリンクを貼り付けてください。",startError:"開始できませんでした。",unknownError:"不明なエラー",openFolder:"ダウンロードフォルダを開く",closeProgram:"プログラムを終了",closedMsg:"プログラムを終了しました。このタブを閉じてかまいません。",u_checking:"更新を確認中…",u_pending:"更新の準備完了：再起動時に適用されます。",u_uptodate:"依存関係は最新です。",u_checked_today:"本日は確認済みです。",u_check_failed:"更新を確認できませんでした。",n_ytdlp_nochecksum:"yt-dlp: チェックサムなし、スキップ",n_ytdlp_badchecksum:"yt-dlp: チェックサム不一致、破棄",n_ytdlp_fail:"yt-dlp: 確認に失敗",n_ffmpeg_fail:"ffmpeg: 確認に失敗",e_ytdlp_missing:"yt-dlp が見つかりません。ビルダーを再実行してください。",playlist:"プレイリスト全体",subtitles:"字幕",subtitlesOrig:"元の言語",subtitlesWarn:"⚠ 時々失敗することがあります(YouTubeの制限)。動画の言語とプログラムの言語が一致していると、うまくいくことがあります。",subtitlesFetching:"元の言語を検出中…",rateLimitBanner:"⚠ YouTubeがダウンロードを制限しています(エラー429)。字幕をオフにして再試行してください。",videoInfoLoading:"情報を読み込み中…",queueTitle:"ダウンロードキュー",queued:"待機中",queueFull:"キューが満杯です（最大16件）。",remove:"削除",recode:"再エンコード",recodeWarn:"動画を H.264+AAC に再エンコードします。ダウンロードした動画に再生の問題がある場合に使用してください。ダウンロードよりかなり時間がかかる可能性があります。"},
+  ko:{sub:"YouTube에서 동영상 또는 오디오를 다운로드합니다. 모두 로컬에서.",linkLabel:"링크",formatLabel:"형식",video:"동영상",audioOnly:"오디오만",videoQuality:"동영상 화질",audioFormat:"오디오 형식",qualityBest:"사용 가능한 최고 화질",download:"다운로드",downloading:"다운로드 중…",preparing:"준비 중…",cancel:"취소",cancelling:"취소 중…",convertingAudio:"오디오 변환 중…",mergingVideo:"동영상과 오디오 병합 중…",completed:"완료",ready:"완료",cancelledMsg:"다운로드가 취소되었습니다.",pasteFirst:"먼저 링크를 붙여넣으세요.",startError:"시작할 수 없습니다.",unknownError:"알 수 없는 오류",openFolder:"다운로드 폴더 열기",closeProgram:"프로그램 닫기",closedMsg:"프로그램이 종료되었습니다. 이 탭을 닫아도 됩니다.",u_checking:"업데이트 확인 중…",u_pending:"업데이트 준비됨: 다시 시작할 때 적용됩니다.",u_uptodate:"종속성이 최신입니다.",u_checked_today:"오늘 이미 확인했습니다.",u_check_failed:"업데이트를 확인할 수 없습니다.",n_ytdlp_nochecksum:"yt-dlp: 체크섬 없음, 건너뜀",n_ytdlp_badchecksum:"yt-dlp: 체크섬 불일치, 폐기됨",n_ytdlp_fail:"yt-dlp: 확인 실패",n_ffmpeg_fail:"ffmpeg: 확인 실패",e_ytdlp_missing:"yt-dlp를 찾을 수 없습니다. 빌더를 다시 실행하세요.",playlist:"전체 재생목록",subtitles:"자막",subtitlesOrig:"원래 언어",subtitlesWarn:"⚠ 가끔 실패할 수 있음(YouTube 제한). 동영상 언어와 프로그램 언어가 일치하면 더 잘 작동하는 경우가 있습니다.",subtitlesFetching:"원본 언어 감지 중…",rateLimitBanner:"⚠ YouTube가 다운로드를 제한하고 있습니다(오류 429). 자막을 끄고 다시 시도해 보세요.",videoInfoLoading:"정보를 불러오는 중…",queueTitle:"다운로드 대기열",queued:"대기 중",queueFull:"대기열이 가득 찼습니다 (최대 16개).",remove:"제거",recode:"재인코딩",recodeWarn:"동영상을 H.264+AAC로 재인코딩합니다. 다운로드한 동영상에 재생 문제가 있을 경우 사용하세요. 다운로드보다 훨씬 오래 걸릴 수 있습니다."},
+  hi:{sub:"YouTube से वीडियो या ऑडियो डाउनलोड करें। सब कुछ लोकल।",linkLabel:"लिंक",formatLabel:"प्रारूप",video:"वीडियो",audioOnly:"केवल ऑडियो",videoQuality:"वीडियो गुणवत्ता",audioFormat:"ऑडियो प्रारूप",qualityBest:"उपलब्ध सर्वोत्तम",download:"डाउनलोड करें",downloading:"डाउनलोड हो रहा है…",preparing:"तैयारी हो रही है…",cancel:"रद्द करें",cancelling:"रद्द किया जा रहा है…",convertingAudio:"ऑडियो परिवर्तित हो रहा है…",mergingVideo:"वीडियो और ऑडियो जोड़े जा रहे हैं…",completed:"पूर्ण",ready:"तैयार",cancelledMsg:"डाउनलोड रद्द किया गया।",pasteFirst:"पहले एक लिंक पेस्ट करें।",startError:"शुरू नहीं हो सका।",unknownError:"अज्ञात त्रुटि",openFolder:"डाउनलोड फ़ोल्डर खोलें",closeProgram:"प्रोग्राम बंद करें",closedMsg:"प्रोग्राम बंद हो गया। आप इस टैब को बंद कर सकते हैं।",u_checking:"अपडेट जाँच रहे हैं…",u_pending:"अपडेट तैयार: पुनः आरंभ पर लागू होगा।",u_uptodate:"निर्भरताएँ अद्यतित हैं।",u_checked_today:"आज पहले ही जाँच हो चुकी है।",u_check_failed:"अपडेट जाँच नहीं सके।",n_ytdlp_nochecksum:"yt-dlp: कोई चेकसम नहीं, छोड़ा गया",n_ytdlp_badchecksum:"yt-dlp: चेकसम मेल नहीं खाता, अस्वीकृत",n_ytdlp_fail:"yt-dlp: जाँच विफल",n_ffmpeg_fail:"ffmpeg: जाँच विफल",e_ytdlp_missing:"yt-dlp नहीं मिला। बिल्डर फिर से चलाएँ।",playlist:"पूरी प्लेलिस्ट",subtitles:"उपशीर्षक",subtitlesOrig:"मूल भाषा",subtitlesWarn:"⚠ कभी-कभी विफल हो सकता है (YouTube सीमा). वीडियो की भाषा प्रोग्राम की भाषा से मेल खाने पर यह कभी-कभी बेहतर काम करता है।",subtitlesFetching:"मूल भाषा का पता लगाया जा रहा है…",rateLimitBanner:"⚠ YouTube डाउनलोड सीमित कर रहा है (त्रुटि 429)। सबटाइटल बंद करके फिर से प्रयास करें।",videoInfoLoading:"जानकारी लोड हो रही है…",queueTitle:"डाउनलोड कतार",queued:"कतार में",queueFull:"कतार भर गई है (अधिकतम 16).",remove:"हटाएं",recode:"पुनः एन्कोडिंग",recodeWarn:"वीडियो को H.264+AAC में पुनः एन्कोड करता है। यदि डाउनलोड किया वीडियो चलाने में समस्या हो तो उपयोग करें। इसमें डाउनलोड से कहीं अधिक समय लग सकता है।"},
+  bn:{sub:"YouTube থেকে ভিডিও বা অডিও ডাউনলোড করুন। সবকিছু লোকাল।",linkLabel:"লিঙ্ক",formatLabel:"ফরম্যাট",video:"ভিডিও",audioOnly:"শুধু অডিও",videoQuality:"ভিডিও মান",audioFormat:"অডিও ফরম্যাট",qualityBest:"সেরা উপলব্ধ",download:"ডাউনলোড",downloading:"ডাউনলোড হচ্ছে…",preparing:"প্রস্তুত হচ্ছে…",cancel:"বাতিল",cancelling:"বাতিল করা হচ্ছে…",convertingAudio:"অডিও রূপান্তর হচ্ছে…",mergingVideo:"ভিডিও ও অডিও যুক্ত হচ্ছে…",completed:"সম্পন্ন",ready:"প্রস্তুত",cancelledMsg:"ডাউনলোড বাতিল হয়েছে।",pasteFirst:"প্রথমে একটি লিঙ্ক পেস্ট করুন।",startError:"শুরু করা যায়নি।",unknownError:"অজানা ত্রুটি",openFolder:"ডাউনলোড ফোল্ডার খুলুন",closeProgram:"প্রোগ্রাম বন্ধ করুন",closedMsg:"প্রোগ্রাম বন্ধ হয়েছে। আপনি এই ট্যাবটি বন্ধ করতে পারেন।",u_checking:"আপডেট পরীক্ষা করা হচ্ছে…",u_pending:"আপডেট প্রস্তুত: পুনরায় চালু করলে প্রয়োগ হবে।",u_uptodate:"নির্ভরতাগুলি হালনাগাদ।",u_checked_today:"আজ ইতিমধ্যে পরীক্ষা করা হয়েছে।",u_check_failed:"আপডেট পরীক্ষা করা যায়নি।",n_ytdlp_nochecksum:"yt-dlp: কোনো চেকসাম নেই, বাদ দেওয়া হয়েছে",n_ytdlp_badchecksum:"yt-dlp: চেকসাম মেলেনি, বাতিল",n_ytdlp_fail:"yt-dlp: পরীক্ষা ব্যর্থ",n_ffmpeg_fail:"ffmpeg: পরীক্ষা ব্যর্থ",e_ytdlp_missing:"yt-dlp পাওয়া যায়নি। বিল্ডার আবার চালান।",playlist:"সম্পূর্ণ প্লেলিস্ট",subtitles:"সাবটাইটেল",subtitlesOrig:"মূল ভাষা",subtitlesWarn:"⚠ মাঝে মাঝে ব্যর্থ হতে পারে (YouTube সীমা). ভিডিওর ভাষা প্রোগ্রামের ভাষার সাথে মিললে এটি মাঝে মাঝে আরও ভালো কাজ করে।",subtitlesFetching:"মূল ভাষা শনাক্ত করা হচ্ছে…",rateLimitBanner:"⚠ YouTube ডাউনলোড সীমিত করছে (ত্রুটি ৪২৯)। সাবটাইটেল বন্ধ করে আবার চেষ্টা করুন।",videoInfoLoading:"তথ্য লোড হচ্ছে…",queueTitle:"ডাউনলোড সারি",queued:"সারিতে আছে",queueFull:"সারি পূর্ণ (সর্বোচ্চ ১৬টি)।",remove:"সরান",recode:"রি-এনকোডিং",recodeWarn:"ভিডিও H.264+AAC-তে রি-এনকোড করে। ডাউনলোড করা ভিডিওতে প্লেব্যাক সমস্যা থাকলে ব্যবহার করুন। ডাউনলোডের চেয়ে অনেক বেশি সময় লাগতে পারে।"},
+  ar:{sub:"نزّل الفيديو أو الصوت من يوتيوب. كل شيء محلي.",linkLabel:"الرابط",formatLabel:"الصيغة",video:"فيديو",audioOnly:"الصوت فقط",videoQuality:"جودة الفيديو",audioFormat:"صيغة الصوت",qualityBest:"الأفضل المتاح",download:"تنزيل",downloading:"جارٍ التنزيل…",preparing:"جارٍ التحضير…",cancel:"إلغاء",cancelling:"جارٍ الإلغاء…",convertingAudio:"جارٍ تحويل الصوت…",mergingVideo:"جارٍ دمج الفيديو والصوت…",completed:"اكتمل",ready:"تم",cancelledMsg:"تم إلغاء التنزيل.",pasteFirst:"الصق رابطًا أولاً.",startError:"تعذّر البدء.",unknownError:"خطأ غير معروف",openFolder:"فتح مجلد التنزيلات",closeProgram:"إغلاق البرنامج",closedMsg:"تم إغلاق البرنامج. يمكنك إغلاق هذه العلامة.",u_checking:"جارٍ البحث عن تحديثات…",u_pending:"التحديث جاهز: سيُطبَّق عند إعادة التشغيل.",u_uptodate:"التبعيات محدّثة.",u_checked_today:"تم التحقق اليوم بالفعل.",u_check_failed:"تعذّر التحقق من التحديثات.",n_ytdlp_nochecksum:"yt-dlp: لا يوجد تحقق، تم التخطي",n_ytdlp_badchecksum:"yt-dlp: عدم تطابق التحقق، تم الرفض",n_ytdlp_fail:"yt-dlp: فشل التحقق",n_ffmpeg_fail:"ffmpeg: فشل التحقق",e_ytdlp_missing:"تعذّر العثور على yt-dlp. شغّل المُنشئ مرة أخرى.",playlist:"قائمة التشغيل كاملة",subtitles:"الترجمات",subtitlesOrig:"اللغة الأصلية",subtitlesWarn:"⚠ قد يفشل أحياناً (حد يوتيوب). يعمل أحياناً بشكل أفضل عندما تتطابق لغة الفيديو مع لغة البرنامج.",subtitlesFetching:"جارٍ اكتشاف اللغة الأصلية…",rateLimitBanner:"⚠ يوتيوب يحدّ من عمليات التنزيل (خطأ 429). جرّب إيقاف الترجمة وإعادة المحاولة.",videoInfoLoading:"جارٍ تحميل المعلومات…",queueTitle:"قائمة التنزيلات",queued:"في الانتظار",queueFull:"القائمة ممتلئة (الحد الأقصى 16).",remove:"إزالة",recode:"إعادة الترميز",recodeWarn:"يُعيد ترميز الفيديو إلى H.264+AAC. استخدمه إذا كان الفيديو المحمَّل يعاني من مشاكل في التشغيل. من المرجح أن يستغرق وقتاً أطول بكثير من التنزيل نفسه."},
+  id:{sub:"Unduh video atau audio dari YouTube. Semua lokal.",linkLabel:"Tautan",formatLabel:"Format",video:"Video",audioOnly:"Hanya audio",videoQuality:"Kualitas video",audioFormat:"Format audio",qualityBest:"Terbaik yang tersedia",download:"Unduh",downloading:"Mengunduh…",preparing:"Menyiapkan…",cancel:"Batal",cancelling:"Membatalkan…",convertingAudio:"Mengonversi audio…",mergingVideo:"Menggabungkan video dan audio…",completed:"Selesai",ready:"Selesai",cancelledMsg:"Unduhan dibatalkan.",pasteFirst:"Tempel tautan terlebih dahulu.",startError:"Tidak dapat memulai.",unknownError:"Kesalahan tidak diketahui",openFolder:"Buka folder unduhan",closeProgram:"Tutup program",closedMsg:"Program ditutup. Anda dapat menutup tab ini.",u_checking:"Memeriksa pembaruan…",u_pending:"Pembaruan siap: akan diterapkan saat dimulai ulang.",u_uptodate:"Dependensi sudah terbaru.",u_checked_today:"Sudah diperiksa hari ini.",u_check_failed:"Tidak dapat memeriksa pembaruan.",n_ytdlp_nochecksum:"yt-dlp: tanpa checksum, dilewati",n_ytdlp_badchecksum:"yt-dlp: checksum tidak cocok, dibuang",n_ytdlp_fail:"yt-dlp: gagal memeriksa",n_ffmpeg_fail:"ffmpeg: gagal memeriksa",e_ytdlp_missing:"yt-dlp tidak ditemukan. Jalankan builder lagi.",playlist:"Seluruh playlist",subtitles:"Terjemahan",subtitlesOrig:"Bahasa asli",subtitlesWarn:"⚠ Terkadang bisa gagal (batas YouTube). Terkadang bekerja lebih baik jika bahasa video sesuai dengan bahasa program.",subtitlesFetching:"Mendeteksi bahasa asli…",rateLimitBanner:"⚠ YouTube sedang membatasi unduhan (error 429). Coba matikan subtitle lalu coba lagi.",videoInfoLoading:"Memuat info…",queueTitle:"Antrean unduhan",queued:"Mengantre",queueFull:"Antrean penuh (maks. 16).",remove:"Hapus",recode:"Pengodean ulang",recodeWarn:"Mengkode ulang video ke H.264+AAC. Gunakan jika video yang diunduh mengalami masalah pemutaran. Kemungkinan akan membutuhkan waktu jauh lebih lama dari unduhan itu sendiri."},
+  ur:{sub:"یوٹیوب سے ویڈیو یا آڈیو ڈاؤن لوڈ کریں۔ سب کچھ مقامی۔",linkLabel:"لنک",formatLabel:"فارمیٹ",video:"ویڈیو",audioOnly:"صرف آڈیو",videoQuality:"ویڈیو کوالٹی",audioFormat:"آڈیو فارمیٹ",qualityBest:"بہترین دستیاب",download:"ڈاؤن لوڈ",downloading:"ڈاؤن لوڈ ہو رہا ہے…",preparing:"تیاری ہو رہی ہے…",cancel:"منسوخ",cancelling:"منسوخ ہو رہا ہے…",convertingAudio:"آڈیو تبدیل ہو رہا ہے…",mergingVideo:"ویڈیو اور آڈیو ملائے جا رہے ہیں…",completed:"مکمل",ready:"تیار",cancelledMsg:"ڈاؤن لوڈ منسوخ ہو گیا۔",pasteFirst:"پہلے ایک لنک پیسٹ کریں۔",startError:"شروع نہیں ہو سکا۔",unknownError:"نامعلوم خرابی",openFolder:"ڈاؤن لوڈ فولڈر کھولیں",closeProgram:"پروگرام بند کریں",closedMsg:"پروگرام بند ہو گیا۔ آپ یہ ٹیب بند کر سکتے ہیں۔",u_checking:"اپ ڈیٹس چیک ہو رہے ہیں…",u_pending:"اپ ڈیٹ تیار: دوبارہ شروع کرنے پر لاگو ہوگا۔",u_uptodate:"انحصار تازہ ترین ہیں۔",u_checked_today:"آج پہلے ہی چیک ہو چکا ہے۔",u_check_failed:"اپ ڈیٹس چیک نہیں ہو سکے۔",n_ytdlp_nochecksum:"yt-dlp: کوئی چیک سم نہیں، چھوڑ دیا گیا",n_ytdlp_badchecksum:"yt-dlp: چیک سم مطابقت نہیں رکھتا، مسترد",n_ytdlp_fail:"yt-dlp: چیک ناکام",n_ffmpeg_fail:"ffmpeg: چیک ناکام",e_ytdlp_missing:"yt-dlp نہیں ملا۔ بلڈر دوبارہ چلائیں۔",playlist:"مکمل پلے لسٹ",subtitles:"سب ٹائٹل",subtitlesOrig:"اصل زبان",subtitlesWarn:"⚠ کبھی کبھار ناکام ہو سکتا ہے (یوٹیوب کی حد). بعض اوقات بہتر کام کرتا ہے اگر ویڈیو کی زبان پروگرام کی زبان سے مل جائے۔",subtitlesFetching:"اصل زبان کا پتہ لگایا جا رہا ہے…",rateLimitBanner:"⚠ یوٹیوب ڈاؤن لوڈز کو محدود کر رہا ہے (ایرر 429)۔ سب ٹائٹلز بند کر کے دوبارہ کوشش کریں۔",videoInfoLoading:"معلومات لوڈ ہو رہی ہیں…",queueTitle:"ڈاؤن لوڈ قطار",queued:"قطار میں",queueFull:"قطار بھر گئی ہے (زیادہ سے زیادہ 16)۔",remove:"ہٹائیں",recode:"دوبارہ انکوڈنگ",recodeWarn:"ویڈیو کو H.264+AAC میں دوبارہ انکوڈ کرتا ہے۔ اگر ڈاؤن لوڈ شدہ ویڈیو چلانے میں مسئلہ ہو تو استعمال کریں۔ ڈاؤن لوڈ سے کہیں زیادہ وقت لگ سکتا ہے۔"},
+  cs:{sub:"Stahujte video nebo zvuk z YouTube. Vše lokálně.",linkLabel:"Odkaz",formatLabel:"Formát",video:"Video",audioOnly:"Pouze zvuk",videoQuality:"Kvalita videa",audioFormat:"Formát zvuku",qualityBest:"Nejlepší dostupná",download:"Stáhnout",downloading:"Stahování…",preparing:"Příprava…",cancel:"Zrušit",cancelling:"Rušení…",convertingAudio:"Převod zvuku…",mergingVideo:"Slučování videa a zvuku…",completed:"Hotovo",ready:"Hotovo",cancelledMsg:"Stahování zrušeno.",pasteFirst:"Nejprve vložte odkaz.",startError:"Nelze spustit.",unknownError:"Neznámá chyba",openFolder:"Otevřít složku se staženými soubory",closeProgram:"Zavřít program",closedMsg:"Program zavřen. Tuto kartu můžete zavřít.",u_checking:"Kontrola aktualizací…",u_pending:"Aktualizace připravena: použije se po restartu.",u_uptodate:"Závislosti jsou aktuální.",u_checked_today:"Dnes již zkontrolováno.",u_check_failed:"Nelze zkontrolovat aktualizace.",n_ytdlp_nochecksum:"yt-dlp: bez kontrolního součtu, přeskočeno",n_ytdlp_badchecksum:"yt-dlp: kontrolní součet nesouhlasí, zahozeno",n_ytdlp_fail:"yt-dlp: kontrola selhala",n_ffmpeg_fail:"ffmpeg: kontrola selhala",e_ytdlp_missing:"yt-dlp nenalezen. Spusťte znovu nástroj pro sestavení.",playlist:"Celý playlist",subtitles:"Titulky",subtitlesOrig:"Původní jazyk",subtitlesWarn:"⚠ Občas může selhat (omezení YouTube). Někdy to funguje lépe, když jazyk videa odpovídá jazyku programu.",subtitlesFetching:"Zjišťování původního jazyka…",rateLimitBanner:"⚠ YouTube momentálně omezuje stahování (chyba 429). Zkuste vypnout titulky a zkusit to znovu.",videoInfoLoading:"Načítání informací…",queueTitle:"Fronta stahování",queued:"Ve frontě",queueFull:"Fronta je plná (max. 16).",remove:"Odebrat",recode:"Překódování",recodeWarn:"Překóduje video do H.264+AAC. Použijte, pokud má stažené video problémy s přehráváním. Pravděpodobně bude trvat výrazně déle než samotné stahování."},
+  pl:{sub:"Pobieraj wideo lub audio z YouTube. Wszystko lokalnie.",linkLabel:"Link",formatLabel:"Format",video:"Wideo",audioOnly:"Tylko audio",videoQuality:"Jakość wideo",audioFormat:"Format audio",qualityBest:"Najlepsza dostępna",download:"Pobierz",downloading:"Pobieranie…",preparing:"Przygotowywanie…",cancel:"Anuluj",cancelling:"Anulowanie…",convertingAudio:"Konwertowanie audio…",mergingVideo:"Łączenie wideo i audio…",completed:"Ukończono",ready:"Gotowe",cancelledMsg:"Pobieranie anulowane.",pasteFirst:"Najpierw wklej link.",startError:"Nie można uruchomić.",unknownError:"Nieznany błąd",openFolder:"Otwórz folder pobranych",closeProgram:"Zamknij program",closedMsg:"Program zamknięty. Możesz zamknąć tę kartę.",u_checking:"Sprawdzanie aktualizacji…",u_pending:"Aktualizacja gotowa: zostanie zastosowana po ponownym uruchomieniu.",u_uptodate:"Zależności są aktualne.",u_checked_today:"Już sprawdzono dzisiaj.",u_check_failed:"Nie można sprawdzić aktualizacji.",n_ytdlp_nochecksum:"yt-dlp: brak sumy kontrolnej, pominięto",n_ytdlp_badchecksum:"yt-dlp: suma kontrolna niezgodna, odrzucono",n_ytdlp_fail:"yt-dlp: sprawdzanie nie powiodło się",n_ffmpeg_fail:"ffmpeg: sprawdzanie nie powiodło się",e_ytdlp_missing:"Nie znaleziono yt-dlp. Uruchom ponownie kreator.",playlist:"Cała playlista",subtitles:"Napisy",subtitlesOrig:"Oryginalny język",subtitlesWarn:"⚠ Czasem może się nie udać (limit YouTube). Czasem działa lepiej, gdy język filmu odpowiada językowi programu.",subtitlesFetching:"Wykrywanie oryginalnego języka…",rateLimitBanner:"⚠ YouTube ogranicza pobieranie (błąd 429). Spróbuj wyłączyć napisy i spróbować ponownie.",videoInfoLoading:"Ładowanie informacji…",queueTitle:"Kolejka pobierania",queued:"W kolejce",queueFull:"Kolejka pełna (maks. 16).",remove:"Usuń",recode:"Ponowne kodowanie",recodeWarn:"Ponownie koduje wideo do H.264+AAC. Użyj, jeśli pobrany film ma problemy z odtwarzaniem. Prawdopodobnie zajmie znacznie więcej czasu niż samo pobieranie."},
+  ca:{sub:"Descarrega vídeo o àudio de YouTube. Tot en local.",linkLabel:"Enllaç",formatLabel:"Format",video:"Vídeo",audioOnly:"Només àudio",videoQuality:"Qualitat de vídeo",audioFormat:"Format d'àudio",qualityBest:"Millor disponible",download:"Descarrega",downloading:"Descarregant…",preparing:"Preparant…",cancel:"Cancel·la",cancelling:"Cancel·lant…",convertingAudio:"Convertint àudio…",mergingVideo:"Unint vídeo i àudio…",completed:"Completat",ready:"Fet",cancelledMsg:"Descàrrega cancel·lada.",pasteFirst:"Enganxa primer un enllaç.",startError:"No s'ha pogut iniciar.",unknownError:"Error desconegut",openFolder:"Obre la carpeta de baixades",closeProgram:"Tanca el programa",closedMsg:"Programa tancat. Ja pots tancar aquesta pestanya.",u_checking:"Cercant actualitzacions…",u_pending:"Actualització llesta: s'aplicarà en reiniciar.",u_uptodate:"Dependències al dia.",u_checked_today:"Comprovació ja feta avui.",u_check_failed:"No s'han pogut comprovar les actualitzacions.",n_ytdlp_nochecksum:"yt-dlp: sense suma de verificació, omès",n_ytdlp_badchecksum:"yt-dlp: la suma no coincideix, descartat",n_ytdlp_fail:"yt-dlp: ha fallat la comprovació",n_ffmpeg_fail:"ffmpeg: ha fallat la comprovació",e_ytdlp_missing:"No es troba yt-dlp. Torna a executar el constructor.",playlist:"Llista de reproducció completa",subtitles:"Subtítols",subtitlesOrig:"Idioma original",subtitlesWarn:"⚠ Pot fallar de tant en tant (límit de YouTube). De vegades funciona millor si l’idioma del vídeo coincideix amb el del programa.",subtitlesFetching:"Detectant l'idioma original…",rateLimitBanner:"⚠ YouTube està limitant les baixades (error 429). Prova de desactivar els subtítols i torna-ho a provar.",videoInfoLoading:"Carregant informació…",queueTitle:"Cua de baixades",queued:"En cua",queueFull:"Cua plena (màx. 16).",remove:"Elimina",recode:"Recodificació",recodeWarn:"Recodifica el vídeo a H.264+AAC. Fes-ho servir si el vídeo descarregat té problemes de reproducció. Probablement trigarà molt més que la descàrrega en si."},
+  eo:{sub:"Elŝutu videon aŭ aŭdion de YouTube. Ĉio loke.",linkLabel:"Ligilo",formatLabel:"Formato",video:"Video",audioOnly:"Nur sono",videoQuality:"Videokvalito",audioFormat:"Sonformato",qualityBest:"Plej bona disponebla",download:"Elŝuti",downloading:"Elŝutante…",preparing:"Preparante…",cancel:"Nuligi",cancelling:"Nuligante…",convertingAudio:"Konvertante sonon…",mergingVideo:"Kunigante videon kaj sonon…",completed:"Finita",ready:"Farita",cancelledMsg:"Elŝuto nuligita.",pasteFirst:"Unue algluu ligilon.",startError:"Ne eblis komenci.",unknownError:"Nekonata eraro",openFolder:"Malfermi la dosierujon de elŝutoj",closeProgram:"Fermi la programon",closedMsg:"Programo fermita. Vi povas fermi ĉi tiun langeton.",u_checking:"Serĉante ĝisdatigojn…",u_pending:"Ĝisdatigo preta: ĝi aplikiĝos post restartigo.",u_uptodate:"Dependaĵoj ĝisdataj.",u_checked_today:"Jam kontrolite hodiaŭ.",u_check_failed:"Ne eblis kontroli ĝisdatigojn.",n_ytdlp_nochecksum:"yt-dlp: sen kontrolsumo, preterlasita",n_ytdlp_badchecksum:"yt-dlp: kontrolsumo ne kongruas, forĵetita",n_ytdlp_fail:"yt-dlp: kontrolo malsukcesis",n_ffmpeg_fail:"ffmpeg: kontrolo malsukcesis",e_ytdlp_missing:"yt-dlp ne trovita. Restartigu la konstruilon.",playlist:"Tuta ludlisto",subtitles:"Subtitoloj",subtitlesOrig:"Originala lingvo",subtitlesWarn:"⚠ Foje povas malsukcesi (limigo de YouTube). Foje funkcias pli bone, se la lingvo de la video kongruas kun tiu de la programo.",subtitlesFetching:"Detektante originalan lingvon…",rateLimitBanner:"⚠ YouTube limigas la elŝutojn (eraro 429). Provu malŝalti la subtekstojn kaj reprovu.",videoInfoLoading:"Ŝargante informojn…",queueTitle:"Vico de elŝutoj",queued:"En vico",queueFull:"Vico plena (maks. 16).",remove:"Forigi",recode:"Rekodigo",recodeWarn:"Rekodigas la videon al H.264+AAC. Uzu se la elŝutita video havas reproduktadajn problemojn. Verŝajne daŭros multe pli longe ol la elŝuto mem."},
+  tr:{sub:"YouTube'dan video veya ses indirin. Her şey yerel olarak.",linkLabel:"Bağlantı",formatLabel:"Biçim",video:"Video",audioOnly:"Yalnızca ses",videoQuality:"Video kalitesi",audioFormat:"Ses biçimi",qualityBest:"En iyi mevcut",download:"İndir",downloading:"İndiriliyor…",preparing:"Hazırlanıyor…",cancel:"İptal",cancelling:"İptal ediliyor…",convertingAudio:"Ses dönüştürülüyor…",mergingVideo:"Video ve ses birleştiriliyor…",completed:"Tamamlandı",ready:"Hazır",cancelledMsg:"İndirme iptal edildi.",pasteFirst:"Önce bir bağlantı yapıştırın.",startError:"Başlatılamadı.",unknownError:"Bilinmeyen hata",openFolder:"İndirilenler klasörünü aç",closeProgram:"Programı kapat",closedMsg:"Program kapatıldı. Bu sekmeyi kapatabilirsiniz.",u_checking:"Güncellemeler aranıyor…",u_pending:"Güncelleme hazır: yeniden başlatıldığında uygulanacak.",u_uptodate:"Bağımlılıklar güncel.",u_checked_today:"Bugün zaten kontrol edildi.",u_check_failed:"Güncellemeler kontrol edilemedi.",n_ytdlp_nochecksum:"yt-dlp: sağlama toplamı yok, atlandı",n_ytdlp_badchecksum:"yt-dlp: sağlama toplamı uyuşmuyor, reddedildi",n_ytdlp_fail:"yt-dlp: kontrol başarısız oldu",n_ffmpeg_fail:"ffmpeg: kontrol başarısız oldu",e_ytdlp_missing:"yt-dlp bulunamadı. Kurulumu tekrar çalıştırın.",playlist:"Tüm oynatma listesi",subtitles:"Altyazılar",subtitlesOrig:"Orijinal dil",subtitlesWarn:"⚠ Bazen başarısız olabilir (YouTube sınırı). Videonun dili programın diliyle eşleştiğinde bazen daha iyi çalışır.",subtitlesFetching:"Orijinal dil tespit ediliyor…",rateLimitBanner:"⚠ YouTube indirmeleri sınırlandırıyor (hata 429). Altyazıları kapatıp tekrar deneyin.",videoInfoLoading:"Bilgiler yükleniyor…",queueTitle:"İndirme kuyruğu",queued:"Sırada",queueFull:"Kuyruk dolu (maks. 16).",remove:"Kaldır",recode:"Yeniden kodlama",recodeWarn:"Videoyu H.264+AAC formatına yeniden kodlar. İndirilen video oynatma sorunları yaşıyorsa kullanın. İndirmeden çok daha uzun sürmesi muhtemeldir."},
+  vi:{sub:"Tải video hoặc âm thanh từ YouTube. Mọi thứ đều cục bộ.",linkLabel:"Liên kết",formatLabel:"Định dạng",video:"Video",audioOnly:"Chỉ âm thanh",videoQuality:"Chất lượng video",audioFormat:"Định dạng âm thanh",qualityBest:"Tốt nhất có thể",download:"Tải xuống",downloading:"Đang tải xuống…",preparing:"Đang chuẩn bị…",cancel:"Hủy",cancelling:"Đang hủy…",convertingAudio:"Đang chuyển đổi âm thanh…",mergingVideo:"Đang ghép video và âm thanh…",completed:"Hoàn tất",ready:"Xong",cancelledMsg:"Đã hủy tải xuống.",pasteFirst:"Hãy dán liên kết trước.",startError:"Không thể bắt đầu.",unknownError:"Lỗi không xác định",openFolder:"Mở thư mục tải xuống",closeProgram:"Đóng chương trình",closedMsg:"Chương trình đã đóng. Bạn có thể đóng tab này.",u_checking:"Đang tìm bản cập nhật…",u_pending:"Bản cập nhật đã sẵn sàng: sẽ được áp dụng khi khởi động lại.",u_uptodate:"Các phụ thuộc đã được cập nhật.",u_checked_today:"Đã kiểm tra hôm nay rồi.",u_check_failed:"Không thể kiểm tra cập nhật.",n_ytdlp_nochecksum:"yt-dlp: không có checksum, đã bỏ qua",n_ytdlp_badchecksum:"yt-dlp: checksum không khớp, đã loại bỏ",n_ytdlp_fail:"yt-dlp: kiểm tra thất bại",n_ffmpeg_fail:"ffmpeg: kiểm tra thất bại",e_ytdlp_missing:"Không tìm thấy yt-dlp. Hãy chạy lại trình cài đặt.",playlist:"Toàn bộ danh sách phát",subtitles:"Phụ đề",subtitlesOrig:"Ngôn ngữ gốc",subtitlesWarn:"⚠ Đôi khi có thể thất bại (giới hạn của YouTube). Đôi khi hoạt động tốt hơn nếu ngôn ngữ video trùng với ngôn ngữ của chương trình.",subtitlesFetching:"Đang phát hiện ngôn ngữ gốc…",rateLimitBanner:"⚠ YouTube đang giới hạn tốc độ tải xuống (lỗi 429). Hãy thử tắt phụ đề và thử lại.",videoInfoLoading:"Đang tải thông tin…",queueTitle:"Hàng đợi tải xuống",queued:"Đang chờ",queueFull:"Hàng đợi đã đầy (tối đa 16).",remove:"Xóa",recode:"Mã hóa lại",recodeWarn:"Mã hóa lại video sang H.264+AAC. Dùng khi video tải về gặp sự cố phát lại. Có thể mất nhiều thời gian hơn đáng kể so với quá trình tải xuống."}
+};
+const LANG_NAMES = {es:"Español",en:"English",fr:"Français",pt:"Português",it:"Italiano",de:"Deutsch",ru:"Русский",zh:"中文",ja:"日本語",ko:"한국어",hi:"हिन्दी",bn:"বাংলা",ar:"العربية",id:"Bahasa Indonesia",ur:"اردو",cs:"Čeština",pl:"Polski",ca:"Català",eo:"Esperanto",tr:"Türkçe",vi:"Tiếng Việt"};
+const FLAGS = {
+  ca:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#fcdd09"/><rect y="1.78" width="24" height="1.78" fill="#da121a"/><rect y="5.33" width="24" height="1.78" fill="#da121a"/><rect y="8.89" width="24" height="1.78" fill="#da121a"/><rect y="12.44" width="24" height="1.78" fill="#da121a"/></svg>',
+  eo:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#007a3d"/><rect width="10" height="8" fill="#fff"/><polygon points="5,1.2 6,4 9,4 6.5,5.8 7.3,8.6 5,6.9 2.7,8.6 3.5,5.8 1,4 4,4" fill="#007a3d"/></svg>',
+  tr:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#e30a17"/><circle cx="9" cy="8" r="4" fill="#fff"/><circle cx="10.5" cy="8" r="3.2" fill="#e30a17"/><polygon points="14,8 12.7,8.6 13.1,7.2 12,6.3 13.5,6.3 14,4.9 14.5,6.3 16,6.3 14.9,7.2 15.3,8.6" fill="#fff"/></svg>',
+  vi:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#da251d"/><polygon points="12,3 13.4,7 17.7,7 14.2,9.5 15.5,13.5 12,11 8.5,13.5 9.8,9.5 6.3,7 10.6,7" fill="#ff0"/></svg>',
+  es:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#c60b1e"/><rect y="4" width="24" height="8" fill="#ffc400"/></svg>',
+  en:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#012169"/><path d="M0,0 24,16 M24,0 0,16" stroke="#fff" stroke-width="3.2"/><path d="M0,0 24,16 M24,0 0,16" stroke="#C8102E" stroke-width="1.8"/><rect x="9.6" width="4.8" height="16" fill="#fff"/><rect y="5.6" width="24" height="4.8" fill="#fff"/><rect x="10.6" width="2.8" height="16" fill="#C8102E"/><rect y="6.6" width="24" height="2.8" fill="#C8102E"/></svg>',
+  fr:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#fff"/><rect width="8" height="16" fill="#002395"/><rect x="16" width="8" height="16" fill="#ed2939"/></svg>',
+  pt:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#da291c"/><rect width="9.6" height="16" fill="#046a38"/><circle cx="9.6" cy="8" r="2.3" fill="#ffe000" stroke="#fff" stroke-width="0.5"/></svg>',
+  it:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#fff"/><rect width="8" height="16" fill="#009246"/><rect x="16" width="8" height="16" fill="#ce2b37"/></svg>',
+  de:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#000"/><rect y="5.33" width="24" height="5.33" fill="#dd0000"/><rect y="10.66" width="24" height="5.34" fill="#ffce00"/></svg>',
+  ru:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#fff"/><rect y="5.33" width="24" height="5.33" fill="#0039a6"/><rect y="10.66" width="24" height="5.34" fill="#d52b1e"/></svg>',
+  zh:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#de2910"/><path fill="#ffde00" d="M5 2.2 6.13 5.68 9.8 5.68 6.83 7.83 7.97 11.3 5 9.16 2.03 11.3 3.17 7.83 0.2 5.68 3.87 5.68Z"/><circle cx="10.5" cy="2.4" r="0.7" fill="#ffde00"/><circle cx="12" cy="4.3" r="0.7" fill="#ffde00"/><circle cx="12" cy="6.8" r="0.7" fill="#ffde00"/><circle cx="10.5" cy="8.6" r="0.7" fill="#ffde00"/></svg>',
+  ja:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#fff"/><circle cx="12" cy="8" r="4.8" fill="#bc002d"/></svg>',
+  ko:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#fff"/><circle cx="12" cy="8" r="4.4" fill="#cd2e3a"/><path d="M12,3.6 a4.4,4.4 0 0,0 0,8.8 a2.2,2.2 0 0,0 0,-4.4 a2.2,2.2 0 0,1 0,-4.4" fill="#0047a0"/></svg>',
+  hi:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#fff"/><rect width="24" height="5.33" fill="#ff9933"/><rect y="10.66" width="24" height="5.34" fill="#138808"/><circle cx="12" cy="8" r="1.9" fill="none" stroke="#000080" stroke-width="0.6"/></svg>',
+  bn:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#006a4e"/><circle cx="10.5" cy="8" r="4.2" fill="#f42a41"/></svg>',
+  ar:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#165d31"/><rect x="4" y="9.4" width="15" height="1.1" fill="#fff"/><rect x="5" y="6.4" width="3" height="1" fill="#fff"/><rect x="9" y="6.4" width="5" height="1" fill="#fff"/><rect x="15" y="6.4" width="3" height="1" fill="#fff"/></svg>',
+  id:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#fff"/><rect width="24" height="8" fill="#ce1126"/></svg>',
+  ur:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#01411c"/><rect width="6" height="16" fill="#fff"/><circle cx="15" cy="8" r="3.6" fill="#fff"/><circle cx="16.5" cy="8" r="3" fill="#01411c"/><path fill="#fff" d="M18.2 5.2 18.8 6.8 20.5 6.8 19.1 7.8 19.6 9.5 18.2 8.5 16.8 9.5 17.3 7.8 15.9 6.8 17.6 6.8Z"/></svg>',
+  cs:'<svg viewBox="0 0 24 16"><rect width="24" height="8" fill="#fff"/><rect y="8" width="24" height="8" fill="#d7141a"/><path d="M0,0 L12,8 L0,16 Z" fill="#11457e"/></svg>',
+  pl:'<svg viewBox="0 0 24 16"><rect width="24" height="16" fill="#dc143c"/><rect width="24" height="8" fill="#fff"/></svg>'
+};
+const RTL = ["ar","ur"];
+let mode = "video";
+const $ = s => document.querySelector(s);
+const qSel = $("#quality"), qLabel = $("#qlabel");
+
+// --- Idioma ---
+function pickLang(){
+  let saved = null;
+  try{ saved = localStorage.getItem("ytp_lang"); }catch(e){}
+  if(saved && I18N[saved]) return saved;
+  const nav = (navigator.languages||[navigator.language||"en"]);
+  for(const l of nav){ const c=(l||"").slice(0,2).toLowerCase(); if(I18N[c]) return c; }
+  return "en";
+}
+let lang = pickLang();
+function t(key){ return (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key; }
+
+const VQ = ["best","1080p","720p","480p","360p"];
+const AQ = ["mp3","m4a","opus","wav","flac"];
+
+function fillQuality(){
+  qLabel.textContent = mode === "video" ? t("videoQuality") : t("audioFormat");
+  const list = mode === "video" ? VQ : AQ;
+  qSel.innerHTML = list.map(v =>
+    `<option value="${v}">${v==="best" ? t("qualityBest") : v.toUpperCase()}</option>`
+  ).join("");
+}
+
+function applyLang(){
+  document.documentElement.lang = lang;
+  document.documentElement.dir = RTL.includes(lang) ? "rtl" : "ltr";
+  $("#t-sub").textContent = t("sub");
+  $("#t-linkLabel").textContent = t("linkLabel");
+  $("#t-formatLabel").textContent = t("formatLabel");
+  $("#t-video").textContent = t("video");
+  $("#t-audioOnly").textContent = t("audioOnly");
+  $("#t-subtitlesLabel").textContent = t("subtitles");
+  $("#t-recodeLabel").textContent = t("recode");
+  $("#t-playlistLabel").textContent = t("playlist");
+  if(subToggle&&subToggle.checked){ subWarn.textContent=t("subtitlesWarn"); updateSubInfo(); }
+  if(vinfo && vinfo.style.display!=="none"){
+    const url=$("#url").value.trim();
+    if(infoCache.url===url && infoCache.data) renderVinfo(infoCache.data);
+  }
+  $("#t-openFolder").textContent = t("openFolder");
+  $("#t-closeProgram").textContent = t("closeProgram");
+  $("#t-queueTitle").textContent = t("queueTitle");
+  if(!go.disabled) go.textContent = t("download");
+  pollQueue();
+  fillQuality();
+  renderLangButton();
+  document.querySelectorAll(".lang-item").forEach(it =>
+    it.classList.toggle("sel", it.dataset.c === lang));
+  try{ localStorage.setItem("ytp_lang", lang); }catch(e){}
+}
+
+function renderLangButton(){
+  $("#langBtnFlag").innerHTML = FLAGS[lang] || "";
+  $("#langBtnName").textContent = LANG_NAMES[lang];
+}
+
+function closeLang(){
+  $("#langList").classList.remove("open");
+  $("#langBtn").setAttribute("aria-expanded", "false");
+}
+
+function setupLangSelector(){
+  const list = $("#langList"), btn = $("#langBtn");
+  list.innerHTML = Object.keys(I18N).sort((a,b)=>LANG_NAMES[a].localeCompare(LANG_NAMES[b],"en")).map(c =>
+    `<div class="lang-item${c===lang?' sel':''}" role="option" data-c="${c}">`
+    + `<span class="lang-flag">${FLAGS[c]||""}</span><span>${LANG_NAMES[c]}</span></div>`
+  ).join("");
+  list.querySelectorAll(".lang-item").forEach(it=>{
+    it.onclick = ()=>{ lang = it.dataset.c; closeLang(); applyLang(); };
+  });
+  btn.onclick = (e)=>{
+    e.stopPropagation();
+    const open = list.classList.toggle("open");
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+  document.addEventListener("click", (e)=>{
+    if(!$("#langWrap").contains(e.target)) closeLang();
+  });
+  document.addEventListener("keydown", (e)=>{ if(e.key==="Escape") closeLang(); });
+  renderLangButton();
+}
+
+document.querySelectorAll("#mode button").forEach(b=>{
+  b.onclick = ()=>{
+    document.querySelectorAll("#mode button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active"); mode = b.dataset.mode; fillQuality(); updateSubRow();
+  };
+});
+
+function fmtBytes(n){ if(!n) return ""; const u=["B","KB","MB","GB"]; let i=0;
+  while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(1)+" "+u[i]; }
+function fmtSpeed(s){ return s ? fmtBytes(s)+"/s" : ""; }
+function fmtEta(e){ if(e==null) return ""; const m=Math.floor(e/60), s=e%60;
+  return m>0 ? `${m}m ${s}s` : `${s}s`; }
+
+// --- Información del vídeo (compartida entre la ficha de info y los subtítulos) ---
+let infoCache={url:null, data:null, promise:null};
+function getVideoInfo(url){
+  if(infoCache.url===url) return infoCache.promise || Promise.resolve(infoCache.data);
+  infoCache={url, data:null, promise:null};
+  infoCache.promise = fetch("/api/info?url="+encodeURIComponent(url)).then(r=>r.json()).then(data=>{
+    if(infoCache.url===url){ infoCache.data=data; infoCache.promise=null; }
+    return data;
+  }).catch(e=>{
+    if(infoCache.url===url) infoCache={url:null, data:null, promise:null};
+    throw e;
+  });
+  return infoCache.promise;
+}
+
+function langDisplayName(code){
+  if(!code) return "";
+  try{
+    const dn=new Intl.DisplayNames([lang,"en"],{type:"language"});
+    const name=dn.of(code);
+    return name && name.toLowerCase()!==code.toLowerCase() ? `${name} (${code})` : code;
+  }catch(e){ return code; }
+}
+
+function fmtDuration(sec){
+  if(sec==null) return "";
+  sec=Math.round(sec);
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  return h>0 ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}` : `${m}:${String(s).padStart(2,"0")}`;
+}
+
+function fmtUploadDate(d){
+  if(!d || d.length!==8) return "";
+  const dt=new Date(`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}T00:00:00Z`);
+  if(isNaN(dt)) return "";
+  try{ return dt.toLocaleDateString(lang,{year:"numeric",month:"long",day:"numeric",timeZone:"UTC"}); }
+  catch(e){ return d; }
+}
+
+// --- Ficha de información del vídeo ---
+const vinfo=$("#vinfo"), vinfoTitle=$("#vinfoTitle"), vinfoChannel=$("#vinfoChannel"),
+      vinfoDuration=$("#vinfoDuration"), vinfoDate=$("#vinfoDate");
+let vinfoReqId=0, vinfoTimer=null;
+
+function renderVinfo(data){
+  vinfoTitle.textContent = (data&&data.title) || "";
+  vinfoChannel.textContent = (data&&data.channel) || "";
+  vinfoDuration.textContent = fmtDuration(data&&data.duration);
+  vinfoDate.textContent = fmtUploadDate(data&&data.upload_date);
+}
+
+function updateVinfo(){
+  const url=$("#url").value.trim();
+  if(!url){ vinfo.style.display="none"; return; }
+  const reqId=++vinfoReqId;
+  vinfo.style.display="";
+  vinfoTitle.textContent = t("videoInfoLoading");
+  vinfoChannel.textContent=""; vinfoDuration.textContent=""; vinfoDate.textContent="";
+  getVideoInfo(url).then(data=>{
+    if(reqId!==vinfoReqId || $("#url").value.trim()!==url) return;
+    renderVinfo(data);
+  }).catch(()=>{
+    if(reqId!==vinfoReqId || $("#url").value.trim()!==url) return;
+    vinfo.style.display="none";
+  });
+}
+
+$("#url").addEventListener("input", ()=>{
+  clearTimeout(vinfoTimer);
+  const url=$("#url").value.trim();
+  if(!url){ vinfo.style.display="none"; if(subToggle.checked) updateSubInfo(); return; }
+  vinfoTimer=setTimeout(()=>{ updateVinfo(); if(subToggle.checked) updateSubInfo(); }, 600);
+});
+
+// --- Subtítulos ---
+const subRow=$("#subRow"), subToggle=$("#subToggle"), subInfo=$("#subInfo"), subWarn=$("#subWarn");
+const playlistToggle=$("#playlistToggle");
+// --- Recodificación ---
+const recodeRow=$("#recodeRow"), recodeToggle=$("#recodeToggle"), recodeWarnEl=$("#recodeWarnEl");
+recodeWarnEl.textContent=t("recodeWarn");
+let subLangReqId=0;
+
+function updateSubInfo(){
+  subInfo.textContent = t("subtitlesOrig");
+  const url=$("#url").value.trim();
+  if(!url) return;
+  const reqId=++subLangReqId;
+  subInfo.textContent = t("subtitlesOrig")+" — "+t("subtitlesFetching");
+  getVideoInfo(url).then(data=>{
+    if(reqId!==subLangReqId || !subToggle.checked) return;
+    const code=(data&&data.language)||"";
+    subInfo.textContent = code
+      ? t("subtitlesOrig")+": "+langDisplayName(code)
+      : t("subtitlesOrig");
+  }).catch(()=>{
+    if(reqId!==subLangReqId || !subToggle.checked) return;
+    subInfo.textContent = t("subtitlesOrig");
+  });
+}
+
+subToggle.onchange=()=>{
+  subInfo.style.display=subToggle.checked?"":"none";
+  subWarn.style.display=subToggle.checked?"":"none";
+  if(subToggle.checked){ subWarn.textContent=t("subtitlesWarn"); updateSubInfo(); }
+};
+
+function updateSubRow(){
+  subRow.style.display=mode==="audio"?"none":"";
+  recodeRow.style.display=mode==="audio"?"none":"";
+  if(mode==="audio"&&subToggle.checked){
+    subToggle.checked=false; subInfo.style.display="none";
+  }
+  if(mode==="audio") recodeToggle.checked=false;
+}
+
+updateSubRow();
+
+const go=$("#go"), msg=$("#msg"), queueWrap=$("#queueWrap"), queueList=$("#queueList"),
+      queueCount=$("#queueCount"), rateLimitBanner=$("#rateLimitBanner");
+function setMsg(t,type){ msg.className="msg "+type; msg.textContent=t; }
+function clearMsg(){ msg.className="msg"; msg.textContent=""; }
+function escHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>(
+  {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+go.onclick = async ()=>{
+  const url = $("#url").value.trim();
+  if(!url){ setMsg(t("pasteFirst"),"err"); return; }
+  clearMsg();
+  try{
+    const subtitles = (subToggle.checked && mode!=="audio")
+      ? {enabled:true, ui_lang:lang}
+      : {enabled:false};
+    const cached = (infoCache.url===url && infoCache.data) ? infoCache.data : null;
+    const r = await fetch("/api/queue",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({url, mode, quality:qSel.value, subtitles, recode:recodeToggle.checked&&mode!=="audio", playlist:playlistToggle.checked, title:(cached&&cached.title)||""})});
+    const data = await r.json();
+    if(!r.ok) throw new Error(data.error==="queue_full" ? t("queueFull") : (data.error||t("startError")));
+    $("#url").value=""; vinfo.style.display="none";
+    pollQueue();
+  }catch(e){ setMsg(e.message,"err"); }
+};
+
+function qStatusLine(it){
+  if(it.status==="queued") return {text:t("queued"), meta:"", percent:null};
+  if(it.status==="starting") return {text:t("preparing"), meta:"", percent:null};
+  if(it.status==="downloading"){
+    const parts=[];
+    if(it.playlist_index!=null && it.playlist_total!=null) parts.push(it.playlist_index+"/"+it.playlist_total);
+    if(it.percent!=null) parts.push(it.percent+"%");
+    if(it.speed) parts.push(fmtSpeed(it.speed));
+    if(it.eta!=null) parts.push("ETA "+fmtEta(it.eta));
+    return {text:t("downloading"), meta:parts.join("  ·  "), percent:it.percent};
+  }
+  if(it.status==="processing"){
+    return {text: it.mode==="audio" ? t("convertingAudio") : t("mergingVideo"), meta:"", percent:100};
+  }
+  if(it.status==="done") return {text:"✅ "+t("completed"), meta:"", percent:100, cls:"done"};
+  if(it.status==="cancelled") return {text:"⏹️ "+t("cancelledMsg"), meta:"", percent:null, cls:"err"};
+  if(it.status==="error"){
+    const txt = it.errcode ? t("e_"+it.errcode) : (it.error||t("unknownError"));
+    return {text:"❌ "+txt, meta:"", percent:null, cls:"err"};
+  }
+  return {text:"", meta:"", percent:null};
+}
+
+function renderQueue(items, max){
+  const rateLimited = items.some(it=> it.status==="error" && /\b429\b/.test(it.error||""));
+  rateLimitBanner.style.display = rateLimited ? "" : "none";
+  if(rateLimited) rateLimitBanner.textContent = t("rateLimitBanner");
+  if(!items.length){ queueWrap.style.display="none"; queueList.innerHTML=""; return; }
+  queueWrap.style.display="";
+  queueCount.textContent = items.length+"/"+max;
+  queueList.innerHTML = items.map(it=>{
+    const s = qStatusLine(it);
+    const cls = "qitem"+(s.cls?" "+s.cls:"");
+    const showBar = it.status==="downloading" || it.status==="processing" || it.status==="starting";
+    const indet = it.status==="starting" || (it.status==="downloading" && it.percent==null);
+    const barHtml = showBar
+      ? '<div class="qitem-bar'+(indet?" indet":"")+'"><i style="width:'+(s.percent!=null?s.percent:0)+'%"></i></div>'
+      : "";
+    const title = it.title || it.url || "";
+    return '<div class="'+cls+'">'
+      +'<div class="qitem-row"><span class="qitem-title" title="'+escHtml(title)+'">'+escHtml(title)+'</span>'
+      +'<button class="qitem-x" data-id="'+escHtml(it.id)+'" title="'+escHtml(t("remove"))+'">✕</button></div>'
+      +'<div class="qitem-meta">'+escHtml(s.text)+(s.meta?"  ·  "+escHtml(s.meta):"")+'</div>'
+      +barHtml
+      +'</div>';
+  }).join("");
+  queueList.querySelectorAll(".qitem-x").forEach(btn=>{
+    btn.onclick = async ()=>{
+      btn.disabled = true;
+      try{ await fetch("/api/queue/"+btn.dataset.id+"/cancel",{method:"POST"}); }catch(e){}
+      pollQueue();
+    };
+  });
+}
+
+let queuePollTimer = null;
+async function pollQueue(){
+  try{
+    const r = await fetch("/api/queue");
+    const data = await r.json();
+    renderQueue(data.items||[], data.max||16);
+  }catch(e){}
+}
+queuePollTimer = setInterval(pollQueue, 1000);
+pollQueue();
+
+$("#openFolder").onclick = ()=> fetch("/api/open-folder",{method:"POST"});
+$("#quit").onclick = async ()=>{
+  try{ await fetch("/api/quit",{method:"POST"}); }catch(e){}
+  document.body.dir = RTL.includes(lang) ? "rtl" : "ltr";
+  document.body.innerHTML =
+    '<div style="color:#8b949e;font-family:Segoe UI,sans-serif;text-align:center;'
+    +'padding-top:25vh">'+t("closedMsg")+'</div>';
+};
+$("#url").addEventListener("keydown", e=>{ if(e.key==="Enter") go.click(); });
+
+// Idioma: inicializar selector y aplicar
+setupLangSelector();
+applyLang();
+
+// Estado de actualización de dependencias (sondeo ligero ~40s)
+const ustatus = $("#ustatus");
+let upolls = 0;
+function updText(u){
+  if(u.checking) return "🔄 " + t("u_checking");
+  if(!u.code || u.code==="checking") return "";
+  let base = t("u_"+u.code);
+  const notes = (u.notes||[]).map(n=>t("n_"+n)).filter(Boolean);
+  return (u.pending ? "🟢 " : "") + base + (notes.length ? "  ("+notes.join("; ")+")" : "");
+}
+async function pollUpdate(){
+  try{
+    const r = await fetch("/api/update-status");
+    const u = await r.json();
+    ustatus.textContent = updText(u);
+    if(!u.checking && u.code && u.code!=="checking") return;
+  }catch(e){}
+  if(++upolls < 20) setTimeout(pollUpdate, 2000);
+}
+setTimeout(pollUpdate, 1500);
+</script>
+</body>
+</html>

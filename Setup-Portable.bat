@@ -25,6 +25,11 @@ if not exist "app.py" (
     pause & exit /b 1
 )
 
+if not exist "web\index.html" (
+    echo [ERROR] Can't find web\index.html. The web folder must sit next to app.py.
+    pause & exit /b 1
+)
+
 if not exist "_tmp" mkdir "_tmp"
 if not exist "bin" mkdir "bin"
 

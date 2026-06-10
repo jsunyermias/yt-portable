@@ -20,6 +20,11 @@ if [ ! -f "app.py" ]; then
     exit 1
 fi
 
+if [ ! -f "web/index.html" ]; then
+    echo "[ERROR] Can't find web/index.html. The web folder must sit next to app.py."
+    exit 1
+fi
+
 # ---- 0) OS / architecture detection -------------------------
 OS="$(uname -s)"
 ARCH="$(uname -m)"

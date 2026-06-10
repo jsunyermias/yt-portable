@@ -17,18 +17,21 @@ jobs:
         run: |
           mkdir -p dist/windows
           cp app.py Setup-Portable.bat README.md LEEME.md LICENSE dist/windows/
+          cp -r web dist/windows/
           (cd dist/windows && zip -r ../../yt-portable-windows.zip .)
 
       - name: Build Linux zip
         run: |
           mkdir -p dist/linux
           cp app.py Setup-Portable.sh README.md LEEME.md LICENSE dist/linux/
+          cp -r web dist/linux/
           (cd dist/linux && zip -r ../../yt-portable-linux.zip .)
 
       - name: Build macOS zip
         run: |
           mkdir -p dist/macos
           cp app.py Setup-Portable.sh README.md LEEME.md LICENSE dist/macos/
+          cp -r web dist/macos/
           (cd dist/macos && zip -r ../../yt-portable-macos.zip .)
 
       - name: Upload zips to the release
