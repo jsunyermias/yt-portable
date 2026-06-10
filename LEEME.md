@@ -12,7 +12,7 @@ ya trae el sistema. Todo el motor (los binarios de `yt-dlp` y `ffmpeg`/
 
 ### Windows
 
-1. Pon `app.py` y `Setup-Portable.bat` en una carpeta vacía.
+1. Pon `app.py`, la carpeta `web/` y `Setup-Portable.bat` en una carpeta vacía.
 2. Doble clic en **`Setup-Portable.bat`**.
    - Descargará dentro de la carpeta: Python embebido (`runtime\`), `yt-dlp.exe` y `ffmpeg` (`bin\`).
    - Tarda unos minutos (ffmpeg es grande). No instala nada en el sistema ni pide permisos de administrador.
@@ -21,7 +21,7 @@ ya trae el sistema. Todo el motor (los binarios de `yt-dlp` y `ffmpeg`/
 
 ### Linux / macOS
 
-1. Pon `app.py` y `Setup-Portable.sh` en una carpeta vacía.
+1. Pon `app.py`, la carpeta `web/` y `Setup-Portable.sh` en una carpeta vacía.
 2. Ejecuta **`./Setup-Portable.sh`** (la primera vez, dale permisos de
    ejecución si hace falta: `chmod +x Setup-Portable.sh`).
    - Descargará dentro de la carpeta `bin/` los binarios `yt-dlp` y
@@ -56,7 +56,8 @@ ya trae el sistema. Todo el motor (los binarios de `yt-dlp` y `ffmpeg`/
 Windows:
 ```
 YT Portable\
-├── app.py                    # Programa (servidor + interfaz)
+├── app.py                    # Programa (servidor + backend)
+├── web/index.html            # Interfaz web (HTML + CSS + JS)
 ├── Setup-Portable.bat        # Constructor (solo 1 vez)
 ├── YT Portable.lnk           # Lanzador SIN ventana (lo crea el constructor)
 ├── Start-Portable.bat        # Lanzador alternativo
@@ -68,7 +69,8 @@ YT Portable\
 Linux / macOS:
 ```
 YT Portable/
-├── app.py                    # Programa (servidor + interfaz)
+├── app.py                    # Programa (servidor + backend)
+├── web/index.html            # Interfaz web (HTML + CSS + JS)
 ├── Setup-Portable.sh         # Constructor (solo 1 vez)
 ├── YT Portable.desktop       # Lanzador de doble clic (Linux; lo crea el constructor)
 ├── YT Portable.command       # Lanzador de doble clic (macOS; lo crea el constructor)

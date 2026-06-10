@@ -49,7 +49,7 @@ the same folder, which you can drop on a USB stick and run anywhere.
 
 ### Windows
 
-1. Put `app.py` and `Setup-Portable.bat` in an empty folder.
+1. Put `app.py`, the `web/` folder and `Setup-Portable.bat` in an empty folder.
 2. Double-click **`Setup-Portable.bat`** (once). It downloads, into that same
    folder: embedded Python (`runtime/`), `yt-dlp.exe`, and `ffmpeg` (`bin/`).
    This takes a few minutes (ffmpeg is large) and installs nothing system-wide.
@@ -65,7 +65,7 @@ PowerShell only during the build).
 
 ### Linux / macOS
 
-1. Put `app.py` and `Setup-Portable.sh` in an empty folder.
+1. Put `app.py`, the `web/` folder and `Setup-Portable.sh` in an empty folder.
 2. Run **`./Setup-Portable.sh`** (once; make it executable first if needed:
    `chmod +x Setup-Portable.sh`). It downloads `yt-dlp` and `ffmpeg`/`ffprobe`
    into `bin/` (using your existing `python3` — no embedded interpreter, since
@@ -106,7 +106,9 @@ the app keeps running with whatever it already has.
 
 ```
 .
-├── app.py                 # The whole program (server + UI), stdlib only
+├── app.py                 # The program (server + backend), stdlib only
+├── web/
+│   └── index.html         # Web UI (HTML + CSS + JS)
 ├── Setup-Portable.bat     # One-time builder for Windows (embedded Python + binaries)
 ├── Setup-Portable.sh      # One-time builder for Linux/macOS (binaries only; uses python3)
 ├── README.md
